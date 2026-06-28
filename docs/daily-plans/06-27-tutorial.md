@@ -72,13 +72,13 @@ lsof -i :6379
 在 `mall-backend` 下执行：
 
 ```bash
-go mod init go-mini-mall
+go mod init go-mall
 ```
 
-这里的 module 名可以先用 `go-mini-mall`。后续如果要发布到 GitHub，可以再改成类似：
+这里的 module 名可以先用 `go-mall`。后续如果要发布到 GitHub，可以再改成类似：
 
 ```text
-github.com/yourname/go-mini-mall
+github.com/yourname/go-mall
 ```
 
 初始化后你应该看到：
@@ -163,13 +163,35 @@ zap              结构化日志
 go mod tidy
 ```
 
+如果此时你还没有创建任何 `.go` 文件，可能会看到：
+
+```text
+go: warning: "all" matched no packages
+```
+
+这是正常 warning，不是失败。原因是当前 module 里还没有 Go package。你可以先继续创建 `cmd/server/main.go`、`internal/config/config.go` 等文件，等代码里真正 import 了 Gin、GORM、Redis、Viper、Zap 之后，再执行一次：
+
+```bash
+go mod tidy
+```
+
+如果你先 `go get` 了依赖，又在没有任何 Go 文件时执行 `go mod tidy`，这些暂时没被代码引用的依赖可能会被移出 `go.mod`。这也没问题，后面写完 import 后再 `go mod tidy` 会重新整理依赖。
+
 ## 第 4 步：编写配置文件
 
 创建：
 
 ```text
-config.yaml
+mall-backend/config.yaml
 ```
+
+也就是项目后端根目录：
+
+```text
+/Users/leo/GoWorkSpace/mall/mall-backend/config.yaml
+```
+
+和 `go.mod` 在同一级。
 
 建议内容：
 
@@ -179,11 +201,11 @@ server:
   mode: debug
 
 mysql:
-  host: 127.0.0.1
+  host: your-remote-mysql-host
   port: 3306
-  user: mall
-  password: mall123456
-  database: mall
+  user: mall_dev_user
+  password: your_password
+  database: mall_dev
   charset: utf8mb4
   parse_time: true
   loc: Local
@@ -255,8 +277,21 @@ type LogConfig struct {
 然后实现一个 `Load` 函数：
 
 ```go
+
 func Load(path string) (*Config, error) {
-    // 使用 viper 读取 config.yaml
+	v := viper.New()
+	v.SetConfigFile(path)
+
+	if err := v.ReadInConfig(); err != nil {
+		return nil, err
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
 }
 ```
 
@@ -329,13 +364,226 @@ func Error(c *gin.Context, httpStatus int, code int, message string)
 pkg/logger/logger.go
 ```
 
-今天可以简单封装 zap。
+今天可以简单封装 zap。你先不用做日志文件、日志切割、请求 ID，今天只要实现：
+
+- 根据配置创建 logger
+- 开发环境输出可读日志
+- 启动失败时能打印错误
+- 其他包可以拿到 `*zap.Logger` 使用
 
 你要完成：
 
 - 根据配置创建 logger
 - 提供 `Info`、`Error` 等基础方法，或者直接返回 `*zap.Logger`
 - 服务启动失败时能打出清晰错误
+
+推荐今天直接返回 `*zap.Logger`，不要过度封装。
+
+### 7.1 先理解 zap 是什么
+
+`zap` 是 Go 里常用的结构化日志库。
+
+普通日志可能是：
+
+```text
+init mysql failed: dial tcp 127.0.0.1:3306 connect refused
+```
+
+结构化日志更像：
+
+```json
+{
+  "level": "error",
+  "msg": "init mysql failed",
+  "error": "dial tcp 127.0.0.1:3306 connect refused"
+}
+```
+
+好处是后续接日志平台、排查问题更方便。
+
+### 7.2 编写 logger.go
+
+在 `pkg/logger/logger.go` 中写：
+
+```go
+package logger
+
+import (
+	"go-mall/internal/config"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+func New(cfg config.LogConfig) (*zap.Logger, error) {
+	level := zapcore.DebugLevel
+
+	switch cfg.Level {
+	case "debug":
+		level = zapcore.DebugLevel
+	case "info":
+		level = zapcore.InfoLevel
+	case "warn":
+		level = zapcore.WarnLevel
+	case "error":
+		level = zapcore.ErrorLevel
+	}
+
+	zapCfg := zap.NewDevelopmentConfig()
+	zapCfg.Level = zap.NewAtomicLevelAt(level)
+
+	return zapCfg.Build()
+}
+```
+
+这段代码做了几件事：
+
+- `package logger`：因为文件在 `pkg/logger` 目录下
+- `New`：创建一个新的 logger
+- `cfg config.LogConfig`：读取 `config.yaml` 里的日志配置
+- `zap.NewDevelopmentConfig()`：使用开发环境日志格式，适合本地调试
+- `zap.NewAtomicLevelAt(level)`：设置日志级别
+- `return zapCfg.Build()`：返回真正可用的 `*zap.Logger`
+
+### 7.3 为什么 logger 包可以 import config
+
+这里用了：
+
+```go
+import "go-mall/internal/config"
+```
+
+原因是你的 `go.mod` 是：
+
+```go
+module go-mall
+```
+
+所以项目内包的 import 路径要从 `go-mall` 开始。
+
+### 7.4 日志级别是什么意思
+
+常见日志级别：
+
+```text
+debug  调试信息，开发时用
+info   普通运行信息
+warn   警告，程序还能继续运行
+error  错误，需要关注
+```
+
+你的 `config.yaml` 里现在是：
+
+```yaml
+log:
+  level: debug
+```
+
+所以本地开发会打印 debug 及以上级别日志。
+
+### 7.5 在 main.go 里使用 logger
+
+在 `cmd/server/main.go` 中大概这样用：
+
+```go
+log, err := logger.New(cfg.Log)
+if err != nil {
+	panic(err)
+}
+defer log.Sync()
+
+log.Info("logger initialized")
+```
+
+如果 MySQL 初始化失败：
+
+```go
+db, err := bootstrap.InitMySQL(cfg.MySQL)
+if err != nil {
+	log.Fatal("init mysql failed", zap.Error(err))
+}
+```
+
+如果 Redis 初始化成功：
+
+```go
+log.Info("redis initialized")
+```
+
+注意：
+
+- `log.Info` 用于普通信息
+- `log.Error` 用于记录错误但程序继续运行
+- `log.Fatal` 会打印日志并退出程序
+- `zap.Error(err)` 会把 error 作为结构化字段打印
+
+### 7.6 main.go 需要 import 什么
+
+如果你在 `main.go` 里用了 logger 和 zap，大概需要：
+
+```go
+import (
+	"go-mall/pkg/logger"
+
+	"go.uber.org/zap"
+)
+```
+
+如果还没有用 `zap.Error(err)`，那暂时不需要 import `go.uber.org/zap`。
+
+### 7.7 常见错误
+
+#### import cycle not allowed
+
+如果出现：
+
+```text
+import cycle not allowed
+```
+
+说明两个包互相 import 了。
+
+今天避免这个问题的原则：
+
+- `pkg/logger` 可以 import `internal/config`
+- `internal/config` 不要 import `pkg/logger`
+- `config.Load` 里不要打日志，只返回 error
+
+#### imported and not used
+
+如果出现：
+
+```text
+imported and not used
+```
+
+说明你 import 了某个包但没使用。Go 不允许无用 import。
+
+解决方式：
+
+- 要么使用它
+- 要么删除这个 import
+
+#### undefined: logger.New
+
+说明：
+
+- `pkg/logger/logger.go` 里没有 `func New`
+- 或者 package 名不是 `logger`
+- 或者 main.go 的 import 路径写错了
+
+### 7.8 今天的最小验收
+
+启动服务时能看到类似日志即可：
+
+```text
+INFO    logger initialized
+INFO    mysql initialized
+INFO    redis initialized
+INFO    server started
+```
+
+日志格式不必完全一样，只要能清楚看到服务启动过程即可。
 
 第一天不要做：
 
@@ -365,7 +613,7 @@ services:
       MYSQL_ROOT_PASSWORD: root123456
       MYSQL_DATABASE: mall
       MYSQL_USER: mall
-      MYSQL_PASSWORD: mall123456
+      MYSQL_PASSWORD: your_password
     ports:
       - "3306:3306"
     volumes:
@@ -435,7 +683,7 @@ func InitMySQL(cfg config.MySQLConfig) (*gorm.DB, error) {
 DSN 大概长这样：
 
 ```text
-mall:mall123456@tcp(127.0.0.1:3306)/mall?charset=utf8mb4&parseTime=True&loc=Local
+mall:your_password@tcp(127.0.0.1:3306)/mall?charset=utf8mb4&parseTime=True&loc=Local
 ```
 
 连接池可以先设置：
@@ -696,7 +944,7 @@ docker logs mall-mysql
 
 ```yaml
 user: mall
-password: mall123456
+password: your_password
 database: mall
 ```
 
@@ -720,13 +968,13 @@ addr: 127.0.0.1:6379
 如果 module 是：
 
 ```text
-go-mini-mall
+go-mall
 ```
 
 那么内部包 import 应该类似：
 
 ```go
-import "go-mini-mall/internal/config"
+import "go-mall/internal/config"
 ```
 
 不要写成文件系统绝对路径。
@@ -830,4 +1078,3 @@ go run ./cmd/server
 - MySQL 能连
 - Redis 能连
 - 基础目录结构清楚
-

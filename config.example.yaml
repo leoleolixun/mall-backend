@@ -1,0 +1,21 @@
+server:
+  port: 8080
+  mode: debug
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: mall_dev_user
+  password: your_password
+  database: mall_dev
+  charset: utf8mb4
+  parse_time: true
+  loc: Local
+
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+
+log:
+  level: debug
