@@ -5,7 +5,9 @@ import (
 	"go-mall/internal/bootstrap"
 	"go-mall/internal/config"
 	"go-mall/internal/handler"
+	"go-mall/internal/repository"
 	"go-mall/internal/router"
+	"go-mall/internal/service"
 	"go-mall/pkg/logger"
 
 	"go.uber.org/zap"
@@ -27,13 +29,32 @@ func main() {
 		log.Fatal("初始化 MySQL 失败: ", zap.Error(err))
 	}
 
+	// 自动迁移数据库表结构
+	if err := bootstrap.AutoMigrate(db); err != nil {
+		log.Fatal("自动迁移失败: ", zap.Error(err))
+	}
+
+	// 初始化默认数据
+	if err := bootstrap.SeedDefaultData(db); err != nil {
+		log.Fatal("初始化默认数据失败: ", zap.Error(err))
+	}
+
 	rdb, err := bootstrap.InitRedis(cfg.Redis)
 	if err != nil {
 		log.Fatal("初始化 Redis 失败: ", zap.Error(err))
 	}
 
+	categoryRepo := repository.NewCategoryRepository(db)
+	productRepo := repository.NewProductRepository(db)
+
+	categoryService := service.NewCategoryService(categoryRepo)
+	productService := service.NewProductService(productRepo, rdb)
+
+	categoryHandler := handler.NewCategoryHandler(categoryService)
+	productHandler := handler.NewProductHandler(productService)
 	healthHandler := handler.NewHealthHandler(db, rdb)
-	r := router.NewRouter(healthHandler)
+
+	r := router.NewRouter(healthHandler, categoryHandler, productHandler)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(addr); err != nil {
