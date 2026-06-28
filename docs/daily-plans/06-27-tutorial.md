@@ -11,9 +11,47 @@
 - 后端启动时能读取配置文件
 - 后端启动时能连接 MySQL
 - 后端启动时能连接 Redis
-- 本地能通过 Docker Compose 启动 MySQL 和 Redis
+- 真实配置保留在本地，不提交到 Git
+- 提供 `config.example.yaml` 作为示例配置
 
 今天不要急着写商品、登录、订单。第一天只做工程底座。
+
+## 当前项目实际完成结果
+
+当前项目已完成：
+
+- `go.mod` 已初始化为 `module go-mall`
+- `cmd/server/main.go` 已创建
+- 配置加载已完成
+- zap 日志初始化已完成
+- MySQL 初始化已完成
+- Redis 初始化已完成
+- `/health` 已接入
+- 统一响应结构已接入
+- `config.example.yaml` 已提交
+- 本地真实 `config.yaml` 已加入 `.gitignore`
+
+实际验证结果：
+
+```bash
+go test ./...
+go run ./cmd/server
+curl http://127.0.0.1:8080/health
+```
+
+健康检查返回：
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "mysql": "ok",
+    "redis": "ok",
+    "status": "ok"
+  }
+}
+```
 
 ## 推荐学习顺序
 
@@ -28,7 +66,7 @@
 4. Gin 最小服务
 5. GORM 连接 MySQL
 6. go-redis 连接 Redis
-7. Docker Compose 基础
+7. 配置文件和敏感信息处理
 ```
 
 ## 第 0 步：确认环境
@@ -51,13 +89,6 @@ go version
 Go 1.24+
 ```
 
-检查 Docker：
-
-```bash
-docker version
-docker compose version
-```
-
 检查 Redis 和 MySQL 端口是否可能冲突：
 
 ```bash
@@ -65,7 +96,14 @@ lsof -i :3306
 lsof -i :6379
 ```
 
-如果你本地已经有 MySQL 或 Redis，可以继续使用本地环境，也可以让 Docker Compose 使用不同端口。
+当前项目实际使用：
+
+```text
+MySQL：远程开发库
+Redis：本地已启动 Redis
+```
+
+所以今天不强制使用 Docker Compose。后续如果你想完全本地化开发，再补 Docker Compose。
 
 ## 第 1 步：初始化 Go module
 
@@ -594,70 +632,84 @@ INFO    server started
 
 这些后续再加。
 
-## 第 8 步：准备 Docker Compose
+## 第 8 步：处理本地配置和示例配置
+
+当前项目使用远程 MySQL 和本地 Redis，因此今天不需要创建 `docker-compose.yml`。
+
+你需要保留两个配置文件概念：
+
+```text
+config.yaml          本地真实配置，不提交
+config.example.yaml  示例配置，可以提交
+```
+
+`config.yaml` 中可以写真实远程 MySQL 地址和本地 Redis 密码，但它必须加入 `.gitignore`。
 
 创建：
 
 ```text
-docker-compose.yml
+.gitignore
 ```
 
-建议服务：
+内容：
+
+```gitignore
+config.yaml
+```
+
+创建：
+
+```text
+config.example.yaml
+```
+
+内容使用占位符：
 
 ```yaml
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: mall-mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: root123456
-      MYSQL_DATABASE: mall
-      MYSQL_USER: mall
-      MYSQL_PASSWORD: your_password
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    command:
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
+server:
+  port: 8080
+  mode: debug
 
-  redis:
-    image: redis:7
-    container_name: mall-redis
-    ports:
-      - "6379:6379"
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: mall_dev_user
+  password: your_password
+  database: mall_dev
+  charset: utf8mb4
+  parse_time: true
+  loc: Local
 
-volumes:
-  mysql_data:
+redis:
+  addr: 127.0.0.1:6379
+  password: ""
+  db: 0
+
+log:
+  level: debug
 ```
 
-启动依赖：
+提交前检查：
 
 ```bash
-docker compose up -d mysql redis
+git status --short --ignored
 ```
 
-查看容器：
+你应该看到：
+
+```text
+!! config.yaml
+```
+
+这表示真实配置已被 Git 忽略。
+
+如果你想确认暂存区没有真实密码：
 
 ```bash
-docker compose ps
+git diff --cached | rg "password|your-real-host|your-real-redis-password"
 ```
 
-停止：
-
-```bash
-docker compose down
-```
-
-如果你的本机 3306 或 6379 已被占用，可以改成：
-
-```yaml
-ports:
-  - "13306:3306"
-```
-
-然后 `config.yaml` 里 MySQL 端口也改成 `13306`。
+如果出现真实密码或真实主机名，不要提交，先清理文档或配置。
 
 ## 第 9 步：初始化 MySQL
 
@@ -872,12 +924,6 @@ func main() {
 
 ## 第 14 步：运行和调试
 
-启动依赖：
-
-```bash
-docker compose up -d mysql redis
-```
-
 整理依赖：
 
 ```bash
@@ -928,7 +974,8 @@ curl http://127.0.0.1:8080/health
 
 常见原因：
 
-- 容器没启动
+- 远程 MySQL 不允许当前 IP 访问
+- 云数据库安全组或白名单没放行
 - 端口被占用
 - 用户名或密码不一致
 - 数据库名不一致
@@ -936,16 +983,17 @@ curl http://127.0.0.1:8080/health
 排查：
 
 ```bash
-docker compose ps
-docker logs mall-mysql
+mysql -h your-remote-mysql-host -P 3306 -u mall_dev_user -p
 ```
 
 确认 `config.yaml`：
 
 ```yaml
-user: mall
+host: your-remote-mysql-host
+port: 3306
+user: mall_dev_user
 password: your_password
-database: mall
+database: mall_dev
 ```
 
 ### 2. Redis 连接失败
@@ -953,8 +1001,7 @@ database: mall
 排查：
 
 ```bash
-docker compose ps
-docker logs mall-redis
+redis-cli ping
 ```
 
 确认：
@@ -1030,14 +1077,15 @@ go run ./cmd/server
 - [ ] `mall-backend/go.mod` 已存在
 - [ ] `cmd/server/main.go` 已存在
 - [ ] `config.yaml` 已存在
-- [ ] `docker-compose.yml` 已存在
-- [ ] `docker compose up -d mysql redis` 可以成功
+- [ ] `config.example.yaml` 已存在
+- [ ] `.gitignore` 已忽略 `config.yaml`
 - [ ] `go run ./cmd/server` 可以启动
 - [ ] 服务启动时 MySQL 连接成功
 - [ ] 服务启动时 Redis 连接成功
 - [ ] `curl http://127.0.0.1:8080/health` 返回统一 JSON
 - [ ] 响应格式包含 `code`、`message`、`data`
 - [ ] 代码可以通过 `go mod tidy`
+- [ ] 代码可以通过 `go test ./...`
 
 ## 今日复盘模板
 
