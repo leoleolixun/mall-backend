@@ -46,15 +46,18 @@ func main() {
 
 	categoryRepo := repository.NewCategoryRepository(db)
 	productRepo := repository.NewProductRepository(db)
+	authRepo := repository.NewAuthRepository(db)
 
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, rdb)
+	authService := service.NewAuthService(authRepo, rdb, cfg.JWT)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
 	healthHandler := handler.NewHealthHandler(db, rdb)
+	authHandler := handler.NewAuthHandler(authService)
 
-	r := router.NewRouter(healthHandler, categoryHandler, productHandler)
+	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, cfg.JWT)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(addr); err != nil {

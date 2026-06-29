@@ -107,7 +107,7 @@ handler -> service -> repository -> model
 - SKU 查询
 - 账号密码注册
 - 账号密码登录
-- 微信模拟登录
+- 微信小程序登录
 - JWT 鉴权中间件
 - 获取当前用户信息
 - 收货地址增删改查
@@ -183,7 +183,7 @@ deleted_at
 ```text
 id
 user_id
-provider        // password, wechat_miniprogram
+provider        // password, wechat_mini_program
 provider_uid    // username 或 openid
 credential      // 密码 hash，微信登录为空
 created_at
@@ -375,7 +375,7 @@ HDEL mall:cart:1001 2005
 ### Refresh Token
 
 ```text
-key: mall:auth:refresh:{user_id}:{token_id}
+key: mall:auth:refresh:{refresh_token}
 value: user_id
 ttl: 7d 或 30d
 ```
@@ -421,13 +421,13 @@ GET /health
 ```http
 POST /api/v1/auth/register
 POST /api/v1/auth/login/password
-POST /api/v1/auth/login/wechat/mock
+POST /api/v1/auth/login/wechat
 POST /api/v1/auth/refresh
 POST /api/v1/auth/logout
 GET  /api/v1/me
 ```
 
-第一版先做微信模拟登录，真实微信登录后续替换为：
+第一版接口命名为微信小程序登录，入参先使用测试 `open_id` 跑通流程。后续接入微信 `code2session` 时，仍然复用同一个接口：
 
 ```http
 POST /api/v1/auth/login/wechat
@@ -491,7 +491,7 @@ docs/daily-plans/07-03.md
 
 一周版只追求后端主流程跑通：
 
-- 不做真实微信登录，只做微信模拟登录
+- 不接真实微信 `code2session`，微信小程序登录接口先使用测试 `open_id` 跑通流程
 - 不做商家后台，只预留 `merchant_id`
 - 不做复杂权限，只做买家 JWT 鉴权
 - 不做真实支付，只做模拟支付
@@ -561,7 +561,7 @@ docs/daily-plans/07-03.md
 - 商品、分类、SKU 都有 `merchant_id`
 - 商品详情第二次查询能命中 Redis 缓存
 
-### 第 3 天：用户体系、账号密码登录、微信模拟登录
+### 第 3 天：用户体系、账号密码登录、微信小程序登录
 
 学习重点：
 
@@ -577,7 +577,7 @@ docs/daily-plans/07-03.md
 - 定义 `user_auths`
 - 实现账号密码注册
 - 实现账号密码登录
-- 实现微信模拟登录
+- 实现微信小程序登录
 - 登录成功签发 access token
 - refresh token 写入 Redis
 - 实现 JWT 中间件
@@ -588,7 +588,7 @@ docs/daily-plans/07-03.md
 
 - 用户可以注册
 - 用户可以账号密码登录
-- 用户可以微信模拟登录
+- 用户可以微信小程序登录
 - 两种登录方式最终都映射到 `users.id`
 - 带 JWT 可以访问 `/api/v1/me`
 - 不带 JWT 访问受保护接口会被拒绝
@@ -749,7 +749,7 @@ docs/daily-plans/07-03.md
 不能砍：
 
 - 账号密码登录
-- 微信模拟登录
+- 微信小程序登录
 - JWT 鉴权
 - Redis 购物车
 - 创建订单事务
@@ -888,7 +888,7 @@ docs/daily-plans/07-03.md
 - 带 JWT 能访问 `/api/v1/me`
 - refresh token 存在 Redis
 
-### 第 6 天：微信模拟登录和登录限流
+### 第 6 天：微信小程序登录和登录限流
 
 学习重点：
 
@@ -898,9 +898,9 @@ docs/daily-plans/07-03.md
 
 开发任务：
 
-- 实现微信模拟登录
+- 实现微信小程序登录
 - 微信登录写入 `user_auths`
-- provider 使用 `wechat_miniprogram`
+- provider 使用 `wechat_mini_program`
 - provider_uid 模拟为 openid
 - 账号密码登录失败接入 Redis 限流
 - 登录失败超过阈值后短时间拒绝登录
@@ -1304,7 +1304,7 @@ chore(backend): 初始化 Go 后端项目结构
 feat(backend): 增加 MySQL 和 Redis 初始化
 feat(product): 增加商品分类和商品查询接口
 feat(auth): 增加账号密码登录
-feat(auth): 增加微信模拟登录
+feat(auth): 增加微信小程序登录
 feat(cart): 增加 Redis 购物车
 feat(order): 增加订单创建事务
 test(order): 增加库存不足和重复提交测试
@@ -1339,7 +1339,7 @@ docs(backend): 增加后端启动说明
 - [ ] Swagger 可访问
 - [ ] 可注册账号
 - [ ] 可账号密码登录
-- [ ] 可微信模拟登录
+- [ ] 可微信小程序登录
 - [ ] JWT 鉴权生效
 - [ ] 可查询商品分类
 - [ ] 可查询商品列表

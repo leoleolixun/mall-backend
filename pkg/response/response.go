@@ -10,6 +10,7 @@ const (
 	CodeSuccess       = 0
 	CodeBadRequest    = 40000
 	CodeInternalError = 50000
+	CodeUnauthorized  = 401 // 未登录
 )
 
 type Response struct {

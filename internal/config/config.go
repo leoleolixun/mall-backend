@@ -7,6 +7,7 @@ type Config struct {
 	MySQL  MySQLConfig  `mapstructure:"mysql"`
 	Redis  RedisConfig  `mapstructure:"redis"`
 	Log    LogConfig    `mapstructure:"log"`
+	JWT    JWTConfig    `mapstructure:"jwt"`
 }
 
 type ServerConfig struct {
@@ -33,6 +34,12 @@ type RedisConfig struct {
 
 type LogConfig struct {
 	Level string `mapstructure:"level"`
+}
+
+type JWTConfig struct {
+	AccessSecret     string `mapstructure:"access_secret"`
+	AccessTTLMinutes int    `mapstructure:"access_ttl_minutes"`
+	RefreshTTLHours  int    `mapstructure:"refresh_ttl_hours"`
 }
 
 func Load(path string) (*Config, error) {
