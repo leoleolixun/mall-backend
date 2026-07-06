@@ -3,11 +3,17 @@ package config
 import "github.com/spf13/viper"
 
 type Config struct {
+	App    AppConfig    `mapstructure:"app"`
 	Server ServerConfig `mapstructure:"server"`
 	MySQL  MySQLConfig  `mapstructure:"mysql"`
 	Redis  RedisConfig  `mapstructure:"redis"`
 	Log    LogConfig    `mapstructure:"log"`
 	JWT    JWTConfig    `mapstructure:"jwt"`
+}
+
+type AppConfig struct {
+	AutoMigrate bool `mapstructure:"auto_migrate"`
+	SeedData    bool `mapstructure:"seed_data"`
 }
 
 type ServerConfig struct {
@@ -46,6 +52,8 @@ func Load(path string) (*Config, error) {
 	// 使用 Viper 加载配置文件
 	v := viper.New()
 	v.SetConfigFile(path)
+	v.SetDefault("app.auto_migrate", false)
+	v.SetDefault("app.seed_data", false)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err

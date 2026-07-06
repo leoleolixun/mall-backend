@@ -1,0 +1,4160 @@
+openapi: 3.0.3
+info:
+  title: go-mall API
+  version: 0.1.0
+  description: |
+    go-mall 单商户商城 MVP 接口文档。
+
+    当前文档作为后端、小程序前端、网页前端共同使用的接口契约。
+    金额字段统一使用分，避免浮点数精度问题。
+
+    标注为“规划接口，后端尚未实现”的接口用于前端 Mock 和后续后端开发排期。
+servers:
+  - url: http://localhost:8080
+    description: local
+tags:
+  - name: Documentation
+    description: 接口文档
+  - name: Health
+    description: 健康检查
+  - name: Product
+    description: 商品与分类
+  - name: Auth
+    description: 登录认证
+  - name: User
+    description: 用户资料与账号能力
+  - name: Merchant
+    description: 用户端商户信息
+  - name: Address
+    description: 收货地址
+  - name: Favorite
+    description: 商品收藏
+  - name: Coupon
+    description: 优惠券
+  - name: Cart
+    description: 购物车
+  - name: Order
+    description: 订单与模拟支付
+  - name: Payment
+    description: 支付与支付回调
+  - name: AfterSale
+    description: 售后与退款
+  - name: Logistics
+    description: 物流信息
+  - name: Upload
+    description: 文件上传
+  - name: MerchantAdmin
+    description: 商家后台，二期规划接口
+  - name: PlatformAdmin
+    description: 平台后台，二期规划接口
+
+paths:
+  /docs/openapi.yaml:
+    get:
+      tags:
+        - Documentation
+      summary: OpenAPI 原始文档
+      operationId: getOpenAPIDocument
+      responses:
+        "200":
+          description: OpenAPI YAML 文档
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  /swagger/index.html:
+    get:
+      tags:
+        - Documentation
+      summary: Swagger UI 页面
+      operationId: getSwaggerUI
+      responses:
+        "200":
+          description: Swagger UI HTML 页面
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: 健康检查
+      operationId: healthCheck
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /api/v1/categories:
+    get:
+      tags:
+        - Product
+      summary: 商品分类列表
+      operationId: listCategories
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Category"
+
+  /api/v1/products:
+    get:
+      tags:
+        - Product
+      summary: 商品列表
+      operationId: listProducts
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 页码
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+          description: 每页数量
+        - name: category_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: 分类 ID
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 搜索关键词
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProductPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/products/{id}:
+    get:
+      tags:
+        - Product
+      summary: 商品详情
+      operationId: getProductDetail
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProductDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/products/{id}/skus:
+    get:
+      tags:
+        - Product
+      summary: 商品 SKU 列表
+      operationId: listProductSKUs
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/SKU"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Auth
+      summary: 账号密码注册
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: 注册成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/auth/login/password:
+    post:
+      tags:
+        - Auth
+      summary: 账号密码登录
+      operationId: passwordLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordLoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/auth/login/wechat:
+    post:
+      tags:
+        - Auth
+      summary: 微信小程序登录
+      operationId: wechatMiniProgramLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WechatMiniProgramLoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Auth
+      summary: 刷新访问令牌
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          description: 刷新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AuthResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: 退出登录
+      operationId: logout
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshTokenRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me:
+    get:
+      tags:
+        - Auth
+      summary: 当前登录用户
+      operationId: getCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - User
+      summary: 更新当前用户资料
+      description: 规划接口，后端尚未实现。
+      operationId: updateCurrentUser
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/mobile:
+    post:
+      tags:
+        - User
+      summary: 绑定或更新手机号
+      description: 规划接口，后端尚未实现。第一版可先使用验证码 Mock。
+      operationId: bindMobile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BindMobileRequest"
+      responses:
+        "200":
+          description: 绑定成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchants/{id}:
+    get:
+      tags:
+        - Merchant
+      summary: 商户公开信息
+      description: 规划接口，后端尚未实现。多商户前台店铺页使用。
+      operationId: getMerchant
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/merchants/{id}/products:
+    get:
+      tags:
+        - Merchant
+      summary: 商户商品列表
+      description: 规划接口，后端尚未实现。用于多商户店铺页。
+      operationId: listMerchantPublicProducts
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProductPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/favorites/products:
+    get:
+      tags:
+        - Favorite
+      summary: 收藏商品列表
+      description: 规划接口，后端尚未实现。
+      operationId: listFavoriteProducts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FavoriteProductPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Favorite
+      summary: 收藏商品
+      description: 规划接口，后端尚未实现。
+      operationId: createFavoriteProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteProductRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/favorites/products/{product_id}:
+    delete:
+      tags:
+        - Favorite
+      summary: 取消收藏商品
+      description: 规划接口，后端尚未实现。
+      operationId: deleteFavoriteProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductPathID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/coupons:
+    get:
+      tags:
+        - Coupon
+      summary: 可领取优惠券列表
+      description: 规划接口，后端尚未实现。
+      operationId: listCoupons
+      parameters:
+        - name: merchant_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+          description: 商户 ID，不传则返回平台可见优惠券
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Coupon"
+
+  /api/v1/coupons/{id}/claim:
+    post:
+      tags:
+        - Coupon
+      summary: 领取优惠券
+      description: 规划接口，后端尚未实现。
+      operationId: claimCoupon
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CouponID"
+      responses:
+        "200":
+          description: 领取成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserCoupon"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/me/coupons:
+    get:
+      tags:
+        - Coupon
+      summary: 我的优惠券
+      description: 规划接口，后端尚未实现。
+      operationId: listMyCoupons
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/UserCouponStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UserCoupon"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/addresses:
+    get:
+      tags:
+        - Address
+      summary: 收货地址列表
+      operationId: listAddresses
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Address"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Address
+      summary: 创建收货地址
+      operationId: createAddress
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Address"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/addresses/{id}:
+    put:
+      tags:
+        - Address
+      summary: 更新收货地址
+      operationId: updateAddress
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Address"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - Address
+      summary: 删除收货地址
+      operationId: deleteAddress
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/addresses/{id}/default:
+    put:
+      tags:
+        - Address
+      summary: 设置默认收货地址
+      operationId: setDefaultAddress
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AddressID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/cart/items:
+    get:
+      tags:
+        - Cart
+      summary: 购物车列表
+      operationId: listCartItems
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CartItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Cart
+      summary: 加入购物车
+      operationId: addCartItem
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCartItemRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - Cart
+      summary: 清空购物车
+      operationId: clearCart
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/cart/items/{sku_id}:
+    put:
+      tags:
+        - Cart
+      summary: 修改购物车商品数量
+      operationId: updateCartItem
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SKUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCartItemRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - Cart
+      summary: 删除购物车商品
+      operationId: deleteCartItem
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SKUID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/preview:
+    post:
+      tags:
+        - Order
+      summary: 订单预览
+      description: 规划接口，后端尚未实现。用于前端订单确认页 Mock 和后续后端实现。
+      operationId: previewOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderPreviewRequest"
+      responses:
+        "200":
+          description: 预览成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrderPreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders:
+    get:
+      tags:
+        - Order
+      summary: 订单列表
+      description: 规划接口，后端尚未实现。
+      operationId: listOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 页码
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+          description: 每页数量
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+          description: 订单状态
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrderPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Order
+      summary: 创建订单
+      description: 规划接口，后端尚未实现。第一版从购物车选择 SKU 创建订单。
+      operationId: createOrder
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{id}:
+    get:
+      tags:
+        - Order
+      summary: 订单详情
+      description: 规划接口，后端尚未实现。
+      operationId: getOrderDetail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{id}/cancel:
+    post:
+      tags:
+        - Order
+      summary: 取消订单
+      description: 规划接口，后端尚未实现。第一版仅允许取消待支付订单。
+      operationId: cancelOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{id}/pay:
+    post:
+      tags:
+        - Order
+      summary: 模拟支付订单
+      description: 规划接口，后端尚未实现。第一版只做模拟支付，不接真实微信支付。
+      operationId: payOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PayOrderRequest"
+      responses:
+        "200":
+          description: 支付成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{id}/confirm:
+    post:
+      tags:
+        - Order
+      summary: 确认收货
+      description: 规划接口，后端尚未实现。
+      operationId: confirmOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: 确认成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/orders/{id}/logistics:
+    get:
+      tags:
+        - Logistics
+      summary: 查询订单物流
+      description: 规划接口，后端尚未实现。
+      operationId: getOrderLogistics
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LogisticsInfo"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/payments:
+    post:
+      tags:
+        - Payment
+      summary: 创建支付单
+      description: 规划接口，后端尚未实现。第一版可返回 mock 支付信息，后续接微信支付。
+      operationId: createPayment
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/payments/{payment_no}:
+    get:
+      tags:
+        - Payment
+      summary: 查询支付单
+      description: 规划接口，后端尚未实现。
+      operationId: getPayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentNo"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/payments/wechat/notify:
+    post:
+      tags:
+        - Payment
+      summary: 微信支付回调
+      description: 规划接口，后端尚未实现。该接口由微信支付平台回调，不使用用户 JWT。
+      operationId: wechatPaymentNotify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: 回调处理成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: SUCCESS
+                  message:
+                    type: string
+                    example: 成功
+
+  /api/v1/after-sales:
+    get:
+      tags:
+        - AfterSale
+      summary: 售后申请列表
+      description: 规划接口，后端尚未实现。
+      operationId: listAfterSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSalePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - AfterSale
+      summary: 创建售后申请
+      description: 规划接口，后端尚未实现。
+      operationId: createAfterSale
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAfterSaleRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSale"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/after-sales/{id}:
+    get:
+      tags:
+        - AfterSale
+      summary: 售后详情
+      description: 规划接口，后端尚未实现。
+      operationId: getAfterSale
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSaleID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSale"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/after-sales/{id}/cancel:
+    post:
+      tags:
+        - AfterSale
+      summary: 取消售后申请
+      description: 规划接口，后端尚未实现。
+      operationId: cancelAfterSale
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSaleID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/uploads:
+    post:
+      tags:
+        - Upload
+      summary: 上传文件
+      description: 规划接口，后端尚未实现。商品图片、头像、售后凭证都可以复用。
+      operationId: uploadFile
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                scene:
+                  type: string
+                  enum:
+                    - avatar
+                    - product
+                    - after_sale
+                  example: product
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UploadFile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/auth/login:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台登录
+      description: 二期规划接口，后端尚未实现。
+      operationId: merchantLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantLoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantAuthResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/merchant/me:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 当前商家后台用户
+      description: 二期规划接口，后端尚未实现。
+      operationId: getMerchantCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/categories:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台分类列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listMerchantCategories
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MerchantCategory"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台创建分类
+      description: 二期规划接口，后端尚未实现。
+      operationId: createMerchantCategory
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantCategoryRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantCategory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/categories/{id}:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台更新分类
+      description: 二期规划接口，后端尚未实现。
+      operationId: updateMerchantCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CategoryID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantCategoryRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantCategory"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台删除分类
+      description: 二期规划接口，后端尚未实现。
+      operationId: deleteMerchantCategory
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CategoryID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台商品列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listMerchantProducts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ProductStatus"
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProductPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台创建商品
+      description: 二期规划接口，后端尚未实现。
+      operationId: createMerchantProduct
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantProductRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProduct"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products/{id}:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台商品详情
+      description: 二期规划接口，后端尚未实现。
+      operationId: getMerchantProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProduct"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台更新商品
+      description: 二期规划接口，后端尚未实现。
+      operationId: updateMerchantProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantProductRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProduct"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products/{id}/on-sale:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台商品上架
+      description: 二期规划接口，后端尚未实现。
+      operationId: onSaleMerchantProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products/{id}/off-sale:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台商品下架
+      description: 二期规划接口，后端尚未实现。
+      operationId: offSaleMerchantProduct
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products/{id}/skus:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台创建商品 SKU
+      description: 二期规划接口，后端尚未实现。
+      operationId: createMerchantProductSKU
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantSKURequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantSKU"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/products/{id}/skus/{sku_id}:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台更新商品 SKU
+      description: 二期规划接口，后端尚未实现。
+      operationId: updateMerchantProductSKU
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+        - $ref: "#/components/parameters/SKUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantSKURequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantSKU"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台删除商品 SKU
+      description: 二期规划接口，后端尚未实现。
+      operationId: deleteMerchantProductSKU
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+        - $ref: "#/components/parameters/SKUID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/coupons:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台优惠券列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listMerchantCoupons
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Coupon"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台创建优惠券
+      description: 二期规划接口，后端尚未实现。
+      operationId: createMerchantCoupon
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CouponRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Coupon"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/coupons/{id}:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台更新优惠券
+      description: 二期规划接口，后端尚未实现。
+      operationId: updateMerchantCoupon
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/CouponID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CouponRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Coupon"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/after-sales:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台售后列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listMerchantAfterSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AfterSaleStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSalePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/after-sales/{id}/approve:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家同意售后
+      description: 二期规划接口，后端尚未实现。
+      operationId: approveMerchantAfterSale
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSaleID"
+      responses:
+        "200":
+          description: 处理成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSale"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/after-sales/{id}/reject:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家拒绝售后
+      description: 二期规划接口，后端尚未实现。
+      operationId: rejectMerchantAfterSale
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSaleID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectAfterSaleRequest"
+      responses:
+        "200":
+          description: 处理成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSale"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/orders:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台订单列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listMerchantOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrderPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/orders/{id}:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台订单详情
+      description: 二期规划接口，后端尚未实现。
+      operationId: getMerchantOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/orders/{id}/ship:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台订单发货
+      description: 二期规划接口，后端尚未实现。
+      operationId: shipMerchantOrder
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShipOrderRequest"
+      responses:
+        "200":
+          description: 发货成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/auth/login:
+    post:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台登录
+      description: 二期规划接口，后端尚未实现。
+      operationId: adminLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminLoginRequest"
+      responses:
+        "200":
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminAuthResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /api/v1/admin/me:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 当前平台管理员
+      description: 二期规划接口，后端尚未实现。
+      operationId: getAdminCurrentUser
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AdminUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/merchants:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台商户列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listAdminMerchants
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/MerchantStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台创建商户
+      description: 二期规划接口，后端尚未实现。
+      operationId: createAdminMerchant
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/merchants/{id}:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台商户详情
+      description: 二期规划接口，后端尚未实现。
+      operationId: getAdminMerchant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    put:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台更新商户
+      description: 二期规划接口，后端尚未实现。
+      operationId: updateAdminMerchant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantRequest"
+      responses:
+        "200":
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/merchants/{id}/enable:
+    post:
+      tags:
+        - PlatformAdmin
+      summary: 启用商户
+      description: 二期规划接口，后端尚未实现。
+      operationId: enableAdminMerchant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/merchants/{id}/disable:
+    post:
+      tags:
+        - PlatformAdmin
+      summary: 禁用商户
+      description: 二期规划接口，后端尚未实现。
+      operationId: disableAdminMerchant
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/users:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台用户列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listAdminUsers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: keyword
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/orders:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台订单列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listAdminOrders
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OrderStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/OrderPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/admin/after-sales:
+    get:
+      tags:
+        - PlatformAdmin
+      summary: 平台后台售后列表
+      description: 二期规划接口，后端尚未实现。
+      operationId: listAdminAfterSales
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AfterSaleStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSalePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ProductID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 商品 ID
+    ProductPathID:
+      name: product_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 商品 ID
+    MerchantID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 商户 ID
+    CategoryID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 分类 ID
+    AddressID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 收货地址 ID
+    SKUID:
+      name: sku_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: SKU ID
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 订单 ID
+    CouponID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 优惠券 ID
+    PaymentNo:
+      name: payment_no
+      in: path
+      required: true
+      schema:
+        type: string
+      description: 支付单号
+    AfterSaleID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 售后申请 ID
+
+  responses:
+    SuccessEmpty:
+      description: 操作成功
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SuccessResponse"
+    BadRequest:
+      description: 参数错误或业务校验失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 40000
+            message: 参数错误
+    Unauthorized:
+      description: 未登录或 token 无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 401
+            message: 未登录
+    InternalError:
+      description: 服务内部错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 50000
+            message: 服务内部错误
+
+  schemas:
+    SuccessResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: ok
+        data:
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          example: 40000
+        message:
+          type: string
+          example: 参数错误
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        mysql:
+          type: string
+          example: ok
+        redis:
+          type: string
+          example: ok
+
+    Category:
+      type: object
+      required:
+        - id
+        - name
+        - sort
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 手机数码
+        sort:
+          type: integer
+          example: 100
+
+    ProductListItem:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - category_id
+        - name
+        - cover
+        - min_price
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+        category_id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: iPhone 15
+        cover:
+          type: string
+          example: https://example.com/iphone.jpg
+        min_price:
+          type: integer
+          format: int64
+          description: 最低 SKU 价格，单位分
+          example: 599900
+
+    ProductPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductListItem"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    ProductDetail:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - category_id
+        - name
+        - cover
+        - description
+        - skus
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+        category_id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: iPhone 15
+        cover:
+          type: string
+          example: https://example.com/iphone.jpg
+        description:
+          type: string
+          example: 商品详情描述
+        skus:
+          type: array
+          items:
+            $ref: "#/components/schemas/SKU"
+
+    SKU:
+      type: object
+      required:
+        - id
+        - name
+        - image
+        - price
+        - stock
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: 黑色 128G
+        image:
+          type: string
+          example: https://example.com/sku.jpg
+        price:
+          type: integer
+          format: int64
+          description: 价格，单位分
+          example: 599900
+        stock:
+          type: integer
+          example: 100
+
+    ProductStatus:
+      type: integer
+      description: |
+        商品状态：
+        0 草稿
+        1 上架
+        2 下架
+      enum:
+        - 0
+        - 1
+        - 2
+      example: 1
+
+    MerchantCategoryRequest:
+      type: object
+      required:
+        - name
+      properties:
+        parent_id:
+          type: integer
+          format: int64
+          description: 父级分类 ID，一级分类为 0
+          example: 0
+        name:
+          type: string
+          example: 手机数码
+        sort:
+          type: integer
+          example: 100
+        status:
+          type: integer
+          description: 0 禁用，1 启用
+          enum:
+            - 0
+            - 1
+          example: 1
+
+    MerchantCategory:
+      allOf:
+        - type: object
+          required:
+            - id
+            - merchant_id
+          properties:
+            id:
+              type: integer
+              format: int64
+              example: 1
+            merchant_id:
+              type: integer
+              format: int64
+              example: 1
+        - $ref: "#/components/schemas/MerchantCategoryRequest"
+
+    MerchantProductRequest:
+      type: object
+      required:
+        - category_id
+        - name
+      properties:
+        category_id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: iPhone 15
+        cover:
+          type: string
+          example: https://example.com/iphone.jpg
+        description:
+          type: string
+          example: 商品详情描述
+        status:
+          $ref: "#/components/schemas/ProductStatus"
+
+    MerchantProduct:
+      allOf:
+        - type: object
+          required:
+            - id
+            - merchant_id
+            - skus
+          properties:
+            id:
+              type: integer
+              format: int64
+              example: 1
+            merchant_id:
+              type: integer
+              format: int64
+              example: 1
+            skus:
+              type: array
+              items:
+                $ref: "#/components/schemas/MerchantSKU"
+            created_at:
+              type: string
+              format: date-time
+              example: "2026-07-06T09:30:00+08:00"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2026-07-06T09:30:00+08:00"
+        - $ref: "#/components/schemas/MerchantProductRequest"
+
+    MerchantProductPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantProduct"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    MerchantSKURequest:
+      type: object
+      required:
+        - name
+        - price
+        - stock
+      properties:
+        name:
+          type: string
+          example: 黑色 128G
+        image:
+          type: string
+          example: https://example.com/sku.jpg
+        price:
+          type: integer
+          format: int64
+          description: 价格，单位分
+          minimum: 0
+          example: 599900
+        stock:
+          type: integer
+          minimum: 0
+          example: 100
+        status:
+          type: integer
+          description: 0 禁用，1 启用
+          enum:
+            - 0
+            - 1
+          example: 1
+
+    MerchantSKU:
+      allOf:
+        - type: object
+          required:
+            - id
+            - merchant_id
+            - product_id
+          properties:
+            id:
+              type: integer
+              format: int64
+              example: 1
+            merchant_id:
+              type: integer
+              format: int64
+              example: 1
+            product_id:
+              type: integer
+              format: int64
+              example: 1
+        - $ref: "#/components/schemas/MerchantSKURequest"
+
+    RegisterRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: test_user
+        password:
+          type: string
+          format: password
+          example: "123456"
+        nickname:
+          type: string
+          example: 测试用户
+
+    PasswordLoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: test_user
+        password:
+          type: string
+          format: password
+          example: "123456"
+
+    WechatMiniProgramLoginRequest:
+      type: object
+      required:
+        - open_id
+      properties:
+        open_id:
+          type: string
+          example: wx_open_id_001
+        nickname:
+          type: string
+          example: 微信用户
+        avatar:
+          type: string
+          example: https://example.com/avatar.jpg
+
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: 7a2c1f80-0000-0000-0000-000000000000
+
+    AuthResult:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - user
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          example: 7a2c1f80-0000-0000-0000-000000000000
+        user:
+          $ref: "#/components/schemas/User"
+
+    User:
+      type: object
+      required:
+        - id
+        - nickname
+        - avatar
+        - mobile
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        nickname:
+          type: string
+          example: 测试用户
+        avatar:
+          type: string
+          example: https://example.com/avatar.jpg
+        mobile:
+          type: string
+          example: "13800138000"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        nickname:
+          type: string
+          example: 新昵称
+        avatar:
+          type: string
+          example: https://example.com/avatar.jpg
+
+    BindMobileRequest:
+      type: object
+      required:
+        - mobile
+        - code
+      properties:
+        mobile:
+          type: string
+          example: "13800138000"
+        code:
+          type: string
+          description: 短信验证码，第一版可 Mock
+          example: "123456"
+
+    UserPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    MerchantStatus:
+      type: integer
+      description: |
+        商户状态：
+        0 禁用
+        1 启用
+        2 待审核
+      enum:
+        - 0
+        - 1
+        - 2
+      example: 1
+
+    MerchantRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: go-mall 自营店
+        logo:
+          type: string
+          example: https://example.com/merchant-logo.jpg
+        description:
+          type: string
+          example: 官方自营店铺
+        status:
+          $ref: "#/components/schemas/MerchantStatus"
+
+    MerchantProfile:
+      allOf:
+        - type: object
+          required:
+            - id
+            - name
+            - status
+          properties:
+            id:
+              type: integer
+              format: int64
+              example: 1
+            created_at:
+              type: string
+              format: date-time
+              example: "2026-07-06T09:30:00+08:00"
+            updated_at:
+              type: string
+              format: date-time
+              example: "2026-07-06T09:30:00+08:00"
+        - $ref: "#/components/schemas/MerchantRequest"
+
+    MerchantPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantProfile"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    FavoriteProductRequest:
+      type: object
+      required:
+        - product_id
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+
+    FavoriteProductPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProductListItem"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    CouponType:
+      type: string
+      description: 优惠券类型
+      enum:
+        - amount
+        - discount
+        - free_shipping
+      example: amount
+
+    Coupon:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - name
+        - type
+        - threshold_amount
+        - discount_amount
+        - started_at
+        - ended_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          description: 0 表示平台券，非 0 表示商户券
+          example: 1
+        name:
+          type: string
+          example: 满 100 减 10
+        type:
+          $ref: "#/components/schemas/CouponType"
+        threshold_amount:
+          type: integer
+          format: int64
+          description: 使用门槛，单位分
+          example: 10000
+        discount_amount:
+          type: integer
+          format: int64
+          description: 优惠金额，单位分
+          example: 1000
+        discount_rate:
+          type: integer
+          description: 折扣券折扣，9000 表示 9 折
+          nullable: true
+          example: null
+        total_quantity:
+          type: integer
+          example: 1000
+        claimed_quantity:
+          type: integer
+          example: 100
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-07-01T00:00:00+08:00"
+        ended_at:
+          type: string
+          format: date-time
+          example: "2026-07-31T23:59:59+08:00"
+
+    CouponRequest:
+      type: object
+      required:
+        - name
+        - type
+        - threshold_amount
+        - started_at
+        - ended_at
+      properties:
+        name:
+          type: string
+          example: 满 100 减 10
+        type:
+          $ref: "#/components/schemas/CouponType"
+        threshold_amount:
+          type: integer
+          format: int64
+          description: 使用门槛，单位分
+          example: 10000
+        discount_amount:
+          type: integer
+          format: int64
+          description: 优惠金额，单位分
+          example: 1000
+        discount_rate:
+          type: integer
+          nullable: true
+          description: 折扣券折扣，9000 表示 9 折
+          example: null
+        total_quantity:
+          type: integer
+          example: 1000
+        started_at:
+          type: string
+          format: date-time
+          example: "2026-07-01T00:00:00+08:00"
+        ended_at:
+          type: string
+          format: date-time
+          example: "2026-07-31T23:59:59+08:00"
+
+    UserCouponStatus:
+      type: integer
+      description: |
+        用户券状态：
+        1 未使用
+        2 已使用
+        3 已过期
+      enum:
+        - 1
+        - 2
+        - 3
+      example: 1
+
+    UserCoupon:
+      type: object
+      required:
+        - id
+        - coupon
+        - status
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        coupon:
+          $ref: "#/components/schemas/Coupon"
+        status:
+          $ref: "#/components/schemas/UserCouponStatus"
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+
+    MerchantLoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: merchant_admin
+        password:
+          type: string
+          format: password
+          example: "123456"
+
+    MerchantAuthResult:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - user
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          example: 7a2c1f80-0000-0000-0000-000000000000
+        user:
+          $ref: "#/components/schemas/MerchantUser"
+
+    MerchantUser:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - merchant_name
+        - username
+        - nickname
+        - role
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        username:
+          type: string
+          example: merchant_admin
+        nickname:
+          type: string
+          example: 店铺管理员
+        role:
+          type: string
+          description: 第一版二期可先使用简单角色，后续再扩展 RBAC
+          example: owner
+
+    AdminLoginRequest:
+      type: object
+      required:
+        - username
+        - password
+      properties:
+        username:
+          type: string
+          example: admin
+        password:
+          type: string
+          format: password
+          example: "123456"
+
+    AdminAuthResult:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - user
+      properties:
+        access_token:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refresh_token:
+          type: string
+          example: 7a2c1f80-0000-0000-0000-000000000000
+        user:
+          $ref: "#/components/schemas/AdminUser"
+
+    AdminUser:
+      type: object
+      required:
+        - id
+        - username
+        - nickname
+        - role
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        username:
+          type: string
+          example: admin
+        nickname:
+          type: string
+          example: 平台管理员
+        role:
+          type: string
+          example: super_admin
+
+    AddressRequest:
+      type: object
+      required:
+        - receiver_name
+        - receiver_phone
+        - province
+        - city
+        - district
+        - detail
+      properties:
+        receiver_name:
+          type: string
+          example: 张三
+        receiver_phone:
+          type: string
+          example: "13800138000"
+        province:
+          type: string
+          example: 浙江省
+        city:
+          type: string
+          example: 杭州市
+        district:
+          type: string
+          example: 西湖区
+        detail:
+          type: string
+          example: 文三路 100 号
+        is_default:
+          type: boolean
+          example: true
+
+    Address:
+      allOf:
+        - type: object
+          required:
+            - id
+          properties:
+            id:
+              type: integer
+              format: int64
+              example: 1
+        - $ref: "#/components/schemas/AddressRequest"
+
+    AddCartItemRequest:
+      type: object
+      required:
+        - sku_id
+        - quantity
+      properties:
+        sku_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+
+    UpdateCartItemRequest:
+      type: object
+      required:
+        - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          example: 3
+
+    CartItem:
+      type: object
+      required:
+        - product_id
+        - sku_id
+        - product_name
+        - sku_name
+        - sku_image
+        - price
+        - quantity
+        - subtotal
+        - stock
+        - available
+      properties:
+        product_id:
+          type: integer
+          format: int64
+          example: 1
+        sku_id:
+          type: integer
+          format: int64
+          example: 1
+        product_name:
+          type: string
+          example: iPhone 15
+        sku_name:
+          type: string
+          example: 黑色 128G
+        sku_image:
+          type: string
+          example: https://example.com/sku.jpg
+        price:
+          type: integer
+          format: int64
+          description: SKU 单价，单位分
+          example: 599900
+        quantity:
+          type: integer
+          example: 2
+        subtotal:
+          type: integer
+          format: int64
+          description: 小计金额，单位分
+          example: 1199800
+        stock:
+          type: integer
+          example: 100
+        available:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: 库存不足
+
+    OrderStatus:
+      type: integer
+      description: |
+        订单状态：
+        1 待支付
+        2 已支付
+        3 已发货
+        4 已完成
+        5 已取消
+      enum:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+      example: 1
+
+    OrderPreviewRequest:
+      type: object
+      required:
+        - address_id
+        - items
+      properties:
+        address_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 收货地址 ID
+          example: 1
+        items:
+          type: array
+          minItems: 1
+          description: 本次下单的购物车 SKU
+          items:
+            $ref: "#/components/schemas/OrderRequestItem"
+
+    CreateOrderRequest:
+      type: object
+      required:
+        - address_id
+        - items
+      properties:
+        address_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 收货地址 ID
+          example: 1
+        remark:
+          type: string
+          description: 买家备注
+          example: 请工作日配送
+        items:
+          type: array
+          minItems: 1
+          description: 本次下单的购物车 SKU
+          items:
+            $ref: "#/components/schemas/OrderRequestItem"
+
+    OrderRequestItem:
+      type: object
+      required:
+        - sku_id
+        - quantity
+      properties:
+        sku_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        quantity:
+          type: integer
+          minimum: 1
+          example: 2
+
+    PayOrderRequest:
+      type: object
+      properties:
+        pay_channel:
+          type: string
+          description: 第一版仅用于模拟支付
+          enum:
+            - mock
+            - wechat
+          default: mock
+          example: mock
+
+    PaymentChannel:
+      type: string
+      enum:
+        - mock
+        - wechat
+      example: mock
+
+    PaymentStatus:
+      type: integer
+      description: |
+        支付状态：
+        1 待支付
+        2 已支付
+        3 已关闭
+        4 已退款
+      enum:
+        - 1
+        - 2
+        - 3
+        - 4
+      example: 1
+
+    CreatePaymentRequest:
+      type: object
+      required:
+        - order_id
+        - pay_channel
+      properties:
+        order_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        pay_channel:
+          $ref: "#/components/schemas/PaymentChannel"
+
+    Payment:
+      type: object
+      required:
+        - payment_no
+        - order_id
+        - amount
+        - pay_channel
+        - status
+      properties:
+        payment_no:
+          type: string
+          example: PAY2026070600000001
+        order_id:
+          type: integer
+          format: int64
+          example: 1
+        amount:
+          type: integer
+          format: int64
+          description: 支付金额，单位分
+          example: 1199800
+        pay_channel:
+          $ref: "#/components/schemas/PaymentChannel"
+        status:
+          $ref: "#/components/schemas/PaymentStatus"
+        pay_params:
+          type: object
+          description: 微信支付参数或 mock 支付参数
+          additionalProperties: true
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+
+    ShipOrderRequest:
+      type: object
+      required:
+        - logistics_company
+        - tracking_no
+      properties:
+        logistics_company:
+          type: string
+          example: 顺丰速运
+        tracking_no:
+          type: string
+          example: SF1234567890
+
+    LogisticsInfo:
+      type: object
+      required:
+        - order_id
+        - logistics_company
+        - tracking_no
+        - traces
+      properties:
+        order_id:
+          type: integer
+          format: int64
+          example: 1
+        logistics_company:
+          type: string
+          example: 顺丰速运
+        tracking_no:
+          type: string
+          example: SF1234567890
+        traces:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogisticsTrace"
+
+    LogisticsTrace:
+      type: object
+      required:
+        - time
+        - content
+      properties:
+        time:
+          type: string
+          format: date-time
+          example: "2026-07-06T12:00:00+08:00"
+        content:
+          type: string
+          example: 快件已发出
+
+    OrderPreview:
+      type: object
+      required:
+        - merchant_id
+        - merchant_name
+        - address
+        - items
+        - goods_amount
+        - freight_amount
+        - discount_amount
+        - payable_amount
+      properties:
+        merchant_id:
+          type: integer
+          format: int64
+          description: 商户 ID，第一版默认 1
+          example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        address:
+          $ref: "#/components/schemas/Address"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        goods_amount:
+          type: integer
+          format: int64
+          description: 商品总金额，单位分
+          example: 1199800
+        freight_amount:
+          type: integer
+          format: int64
+          description: 运费，单位分
+          example: 0
+        discount_amount:
+          type: integer
+          format: int64
+          description: 优惠金额，单位分
+          example: 0
+        payable_amount:
+          type: integer
+          format: int64
+          description: 应付金额，单位分
+          example: 1199800
+
+    OrderPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    Order:
+      type: object
+      required:
+        - id
+        - order_no
+        - user_id
+        - merchant_id
+        - merchant_name
+        - status
+        - status_text
+        - receiver_name
+        - receiver_phone
+        - receiver_address
+        - goods_amount
+        - freight_amount
+        - discount_amount
+        - payable_amount
+        - remark
+        - items
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        order_no:
+          type: string
+          example: "2026070600000001"
+        user_id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          description: 商户 ID，第一版默认 1
+          example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        status_text:
+          type: string
+          example: 待支付
+        receiver_name:
+          type: string
+          example: 张三
+        receiver_phone:
+          type: string
+          example: "13800138000"
+        receiver_address:
+          type: string
+          example: 浙江省杭州市西湖区文三路 100 号
+        goods_amount:
+          type: integer
+          format: int64
+          description: 商品总金额，单位分
+          example: 1199800
+        freight_amount:
+          type: integer
+          format: int64
+          description: 运费，单位分
+          example: 0
+        discount_amount:
+          type: integer
+          format: int64
+          description: 优惠金额，单位分
+          example: 0
+        payable_amount:
+          type: integer
+          format: int64
+          description: 应付金额，单位分
+          example: 1199800
+        remark:
+          type: string
+          example: 请工作日配送
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-07-06T10:00:00+08:00"
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-07-06T09:30:00+08:00"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2026-07-06T09:30:00+08:00"
+
+    OrderItem:
+      type: object
+      required:
+        - id
+        - product_id
+        - sku_id
+        - product_name
+        - sku_name
+        - sku_image
+        - price
+        - quantity
+        - subtotal
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        product_id:
+          type: integer
+          format: int64
+          example: 1
+        sku_id:
+          type: integer
+          format: int64
+          example: 1
+        product_name:
+          type: string
+          example: iPhone 15
+        sku_name:
+          type: string
+          example: 黑色 128G
+        sku_image:
+          type: string
+          example: https://example.com/sku.jpg
+        price:
+          type: integer
+          format: int64
+          description: 下单时 SKU 单价，单位分
+          example: 599900
+        quantity:
+          type: integer
+          example: 2
+        subtotal:
+          type: integer
+          format: int64
+          description: 小计金额，单位分
+          example: 1199800
+
+    AfterSaleType:
+      type: string
+      description: 售后类型
+      enum:
+        - refund_only
+        - return_refund
+      example: refund_only
+
+    AfterSaleStatus:
+      type: integer
+      description: |
+        售后状态：
+        1 待审核
+        2 已同意
+        3 已拒绝
+        4 已取消
+        5 已退款
+      enum:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+      example: 1
+
+    CreateAfterSaleRequest:
+      type: object
+      required:
+        - order_id
+        - order_item_id
+        - type
+        - reason
+      properties:
+        order_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        order_item_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 1
+        type:
+          $ref: "#/components/schemas/AfterSaleType"
+        reason:
+          type: string
+          example: 商品不想要了
+        images:
+          type: array
+          items:
+            type: string
+          example:
+            - https://example.com/proof.jpg
+
+    RejectAfterSaleRequest:
+      type: object
+      required:
+        - reject_reason
+      properties:
+        reject_reason:
+          type: string
+          example: 商品已影响二次销售
+
+    AfterSale:
+      type: object
+      required:
+        - id
+        - order_id
+        - order_item_id
+        - type
+        - status
+        - reason
+        - refund_amount
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        order_id:
+          type: integer
+          format: int64
+          example: 1
+        order_item_id:
+          type: integer
+          format: int64
+          example: 1
+        type:
+          $ref: "#/components/schemas/AfterSaleType"
+        status:
+          $ref: "#/components/schemas/AfterSaleStatus"
+        reason:
+          type: string
+          example: 商品不想要了
+        reject_reason:
+          type: string
+          nullable: true
+          example: null
+        refund_amount:
+          type: integer
+          format: int64
+          description: 退款金额，单位分
+          example: 599900
+        images:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+          example: "2026-07-06T09:30:00+08:00"
+
+    AfterSalePage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/AfterSale"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    UploadFile:
+      type: object
+      required:
+        - url
+        - filename
+        - size
+      properties:
+        url:
+          type: string
+          example: https://example.com/uploads/product.jpg
+        filename:
+          type: string
+          example: product.jpg
+        size:
+          type: integer
+          format: int64
+          description: 文件大小，单位字节
+          example: 102400

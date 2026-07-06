@@ -29,14 +29,16 @@ func main() {
 		log.Fatal("初始化 MySQL 失败: ", zap.Error(err))
 	}
 
-	// 自动迁移数据库表结构
-	if err := bootstrap.AutoMigrate(db); err != nil {
-		log.Fatal("自动迁移失败: ", zap.Error(err))
+	if cfg.App.AutoMigrate {
+		if err := bootstrap.AutoMigrate(db); err != nil {
+			log.Fatal("自动迁移失败: ", zap.Error(err))
+		}
 	}
 
-	// 初始化默认数据
-	if err := bootstrap.SeedDefaultData(db); err != nil {
-		log.Fatal("初始化默认数据失败: ", zap.Error(err))
+	if cfg.App.SeedData {
+		if err := bootstrap.SeedDefaultData(db); err != nil {
+			log.Fatal("初始化默认数据失败: ", zap.Error(err))
+		}
 	}
 
 	rdb, err := bootstrap.InitRedis(cfg.Redis)
@@ -47,17 +49,22 @@ func main() {
 	categoryRepo := repository.NewCategoryRepository(db)
 	productRepo := repository.NewProductRepository(db)
 	authRepo := repository.NewAuthRepository(db)
+	addressRepo := repository.NewAddressRepository(db)
 
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, rdb)
 	authService := service.NewAuthService(authRepo, rdb, cfg.JWT)
+	addressService := service.NewAddressService(addressRepo)
+	cartService := service.NewCartService(rdb, productRepo)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
 	healthHandler := handler.NewHealthHandler(db, rdb)
 	authHandler := handler.NewAuthHandler(authService)
+	addressHandler := handler.NewAddressHandler(addressService)
+	cartHandler := handler.NewCartHandler(cartService)
 
-	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, cfg.JWT)
+	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, addressHandler, cartHandler, cfg.JWT)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(addr); err != nil {

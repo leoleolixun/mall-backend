@@ -4,6 +4,10 @@
 
 两周内完成一个可运行、可联调、结构规范的 Go 商城后端第一版。
 
+真实开发准则见：[real-development-guidelines.md](/Users/leo/GoWorkSpace/mall/mall-backend/docs/real-development-guidelines.md)
+
+当前执行计划见：[current-backend-plan.md](/Users/leo/GoWorkSpace/mall/mall-backend/docs/current-backend-plan.md)
+
 第一版目标不是完整商业商城，而是：
 
 - 掌握 Go 后端核心开发方式
@@ -25,6 +29,15 @@
 - 订单保留商品、SKU、价格、地址快照
 - 所有买家侧核心接口都能跑通
 - 项目结构清晰，方便继续扩展多商户
+
+工程质量完成标准：
+
+- 每个功能有清晰接口契约
+- 用户私有数据按 `user_id` 做隔离
+- Service 不依赖 Gin，Repository 不处理 HTTP
+- 写操作考虑事务、幂等或重复提交风险
+- 提交前通过 `gofmt`、`go test ./...`、`git diff --check`
+- 真实配置和密钥不进入 Git
 
 ## 技术栈
 
@@ -477,16 +490,12 @@ POST /api/v1/orders/:id/pay
 
 如果目标是 7 天内完成第一版，需要每天投入 6 到 8 小时，并且严格压缩范围。
 
-每日独立计划文档：
+当前每日计划只保留今天及之后的文件。今天之前的每日计划已经清理，旧内容需要时从 Git 历史查看。
 
 ```text
-docs/daily-plans/06-27.md
-docs/daily-plans/06-28.md
-docs/daily-plans/06-29.md
-docs/daily-plans/06-30.md
-docs/daily-plans/07-01.md
-docs/daily-plans/07-02.md
-docs/daily-plans/07-03.md
+docs/daily-plans/07-06.md
+docs/daily-plans/07-07.md
+docs/daily-plans/07-08.md
 ```
 
 一周版只追求后端主流程跑通：

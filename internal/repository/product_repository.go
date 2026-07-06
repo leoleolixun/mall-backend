@@ -13,6 +13,8 @@ type ProductRepository interface {
 	FindOnSaleByID(ctx context.Context, merchantID int64, id int64) (*model.Product, error)
 	ListEnabledSKUs(ctx context.Context, merchantID int64, productID int64) ([]model.ProductSKU, error)
 	FindMinPrices(ctx context.Context, merchantID int64, productIDs []int64) (map[int64]int64, error)
+	FindSKUsByIDs(ctx context.Context, merchantID int64, skuIDs []int64) ([]model.ProductSKU, error)
+	FindProductsByIDs(ctx context.Context, merchantID int64, productIDs []int64) ([]model.Product, error)
 }
 
 // ProductRepository 接口的具体实现，封装了对商品相关数据的操作
@@ -111,4 +113,28 @@ func (r *productRepository) FindMinPrices(ctx context.Context, merchantID int64,
 	}
 
 	return minPrices, nil
+}
+
+func (r *productRepository) FindSKUsByIDs(ctx context.Context, merchantID int64, skuIDs []int64) ([]model.ProductSKU, error) {
+	if len(skuIDs) == 0 {
+		return []model.ProductSKU{}, nil
+	}
+
+	var skus []model.ProductSKU
+	err := r.db.WithContext(ctx).
+		Where("merchant_id = ? AND id IN ?", merchantID, skuIDs).
+		Find(&skus).Error
+	return skus, err
+}
+
+func (r *productRepository) FindProductsByIDs(ctx context.Context, merchantID int64, productIDs []int64) ([]model.Product, error) {
+	if len(productIDs) == 0 {
+		return []model.Product{}, nil
+	}
+
+	var products []model.Product
+	err := r.db.WithContext(ctx).
+		Where("merchant_id = ? AND id IN ?", merchantID, productIDs).
+		Find(&products).Error
+	return products, err
 }

@@ -10,6 +10,7 @@ import (
 type AuthRepository interface {
 	CreateUser(ctx context.Context, user *model.User) error
 	CreateUserAuth(ctx context.Context, auth *model.UserAuth) error
+	CreateUserWithAuth(ctx context.Context, user *model.User, auth *model.UserAuth) error
 	FindAuthByProvider(ctx context.Context, provider string, providerUID string) (*model.UserAuth, error)
 	FindUserByID(ctx context.Context, userID int64) (*model.User, error)
 }
@@ -28,6 +29,21 @@ func (r *authRepository) CreateUser(ctx context.Context, user *model.User) error
 
 func (r *authRepository) CreateUserAuth(ctx context.Context, auth *model.UserAuth) error {
 	return r.db.WithContext(ctx).Create(auth).Error
+}
+
+func (r *authRepository) CreateUserWithAuth(ctx context.Context, user *model.User, auth *model.UserAuth) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(user).Error; err != nil {
+			return err
+		}
+
+		auth.UserID = user.ID
+		if err := tx.Create(auth).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
 }
 
 func (r *authRepository) FindAuthByProvider(ctx context.Context, provider string, providerUID string) (*model.UserAuth, error) {

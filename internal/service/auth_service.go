@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go-mall/internal/config"
 	"go-mall/internal/dto"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
 )
 
 type AuthService interface {
@@ -90,6 +92,8 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterRequest) (*d
 
 	if _, err := s.authRepo.FindAuthByProvider(ctx, model.AuthProviderPassword, req.Username); err == nil {
 		return nil, fmt.Errorf("用户名已存在")
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	hashed, err := password.HashPassword(req.Password)
@@ -111,12 +115,11 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterRequest) (*d
 	}
 
 	auth := &model.UserAuth{
-		UserID:      user.ID,
 		Provider:    model.AuthProviderPassword,
 		ProviderUID: req.Username,
 		Credential:  hashed,
 	}
-	if err := s.authRepo.CreateUserAuth(ctx, auth); err != nil {
+	if err := s.authRepo.CreateUserWithAuth(ctx, user, auth); err != nil {
 		return nil, err
 	}
 
@@ -166,6 +169,8 @@ func (s *authService) WechatMiniProgramLogin(ctx context.Context, req dto.Wechat
 			return nil, err
 		}
 		return s.buildAuthResponse(ctx, user)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 
 	nickname := strings.TrimSpace(req.Nickname)
@@ -178,16 +183,11 @@ func (s *authService) WechatMiniProgramLogin(ctx context.Context, req dto.Wechat
 		Avatar:   req.Avatar,
 		Status:   model.StatusEnabled,
 	}
-	if err := s.authRepo.CreateUser(ctx, user); err != nil {
-		return nil, err
-	}
-
 	newAuth := &model.UserAuth{
-		UserID:      user.ID,
 		Provider:    model.AuthProviderWechatMiniProgram,
 		ProviderUID: req.OpenID,
 	}
-	if err := s.authRepo.CreateUserAuth(ctx, newAuth); err != nil {
+	if err := s.authRepo.CreateUserWithAuth(ctx, user, newAuth); err != nil {
 		return nil, err
 	}
 

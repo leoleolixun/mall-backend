@@ -6,6 +6,8 @@ import (
 	"go-mall/internal/middleware"
 
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 func NewRouter(
@@ -13,6 +15,8 @@ func NewRouter(
 	categoryHandler *handler.CategoryHandler,
 	productHandler *handler.ProductHandler,
 	authHandler *handler.AuthHandler,
+	addressHandler *handler.AddressHandler,
+	cartHandler *handler.CartHandler,
 	jwtCfg config.JWTConfig,
 ) *gin.Engine {
 	r := gin.New()
@@ -22,6 +26,8 @@ func NewRouter(
 	r.Use(gin.Recovery())
 
 	r.GET("/health", healthHandler.Health)
+	r.StaticFile("/docs/openapi.yaml", "docs/openapi.yaml")
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/docs/openapi.yaml")))
 
 	api := r.Group("/api/v1")
 	{
@@ -43,6 +49,18 @@ func NewRouter(
 		{
 			protected.GET("/me", authHandler.Me)
 			protected.POST("/auth/logout", authHandler.Logout)
+
+			protected.GET("/addresses", addressHandler.List)
+			protected.POST("/addresses", addressHandler.Create)
+			protected.PUT("/addresses/:id", addressHandler.Update)
+			protected.DELETE("/addresses/:id", addressHandler.Delete)
+			protected.PUT("/addresses/:id/default", addressHandler.SetDefault)
+
+			protected.GET("/cart/items", cartHandler.List)
+			protected.POST("/cart/items", cartHandler.Add)
+			protected.PUT("/cart/items/:sku_id", cartHandler.Update)
+			protected.DELETE("/cart/items/:sku_id", cartHandler.Delete)
+			protected.DELETE("/cart/items", cartHandler.Clear)
 		}
 	}
 

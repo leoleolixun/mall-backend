@@ -14,5 +14,6 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.ProductSKU{},
 		&model.User{},
 		&model.UserAuth{},
+		&model.Address{},
 	)
 }
