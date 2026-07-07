@@ -110,9 +110,6 @@ func (s *authService) Register(ctx context.Context, req dto.RegisterRequest) (*d
 		Nickname: nickname,
 		Status:   model.StatusEnabled,
 	}
-	if err := s.authRepo.CreateUser(ctx, user); err != nil {
-		return nil, err
-	}
 
 	auth := &model.UserAuth{
 		Provider:    model.AuthProviderPassword,

@@ -50,12 +50,14 @@ func main() {
 	productRepo := repository.NewProductRepository(db)
 	authRepo := repository.NewAuthRepository(db)
 	addressRepo := repository.NewAddressRepository(db)
+	orderRepo := repository.NewOrderRepository(db)
 
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, rdb)
 	authService := service.NewAuthService(authRepo, rdb, cfg.JWT)
 	addressService := service.NewAddressService(addressRepo)
 	cartService := service.NewCartService(rdb, productRepo)
+	orderService := service.NewOrderService(orderRepo, addressRepo, productRepo, rdb)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
@@ -63,8 +65,9 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 	addressHandler := handler.NewAddressHandler(addressService)
 	cartHandler := handler.NewCartHandler(cartService)
+	orderHandler := handler.NewOrderHandler(orderService)
 
-	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, addressHandler, cartHandler, cfg.JWT)
+	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, addressHandler, cartHandler, orderHandler, cfg.JWT)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(addr); err != nil {

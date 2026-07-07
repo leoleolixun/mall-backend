@@ -17,6 +17,7 @@ func NewRouter(
 	authHandler *handler.AuthHandler,
 	addressHandler *handler.AddressHandler,
 	cartHandler *handler.CartHandler,
+	orderHandler *handler.OrderHandler,
 	jwtCfg config.JWTConfig,
 ) *gin.Engine {
 	r := gin.New()
@@ -61,6 +62,9 @@ func NewRouter(
 			protected.PUT("/cart/items/:sku_id", cartHandler.Update)
 			protected.DELETE("/cart/items/:sku_id", cartHandler.Delete)
 			protected.DELETE("/cart/items", cartHandler.Clear)
+
+			protected.POST("/orders/preview", orderHandler.Preview)
+			protected.POST("/orders", orderHandler.Create)
 		}
 	}
 
