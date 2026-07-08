@@ -65,7 +65,11 @@ func NewRouter(
 			protected.DELETE("/cart/items", cartHandler.Clear)
 
 			protected.POST("/orders/preview", orderHandler.Preview)
+			protected.GET("/orders", orderHandler.List)
 			protected.POST("/orders", orderHandler.Create)
+			protected.GET("/orders/:id", orderHandler.Detail)
+			protected.POST("/orders/:id/cancel", orderHandler.Cancel)
+			protected.POST("/orders/:id/pay", orderHandler.Pay)
 		}
 	}
 

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go-mall/internal/model"
 
@@ -15,6 +16,7 @@ type OrderRepository interface {
 	Create(ctx context.Context, order *model.Order) error
 	CreateItems(ctx context.Context, items []model.OrderItem) error
 	Update(ctx context.Context, order *model.Order) error
+	UpdateStatus(ctx context.Context, id int64, userID int64, currentStatus int, nextStatus int, paidAt *time.Time, cancelledAt *time.Time) error
 
 	FindByIDAndUserID(ctx context.Context, id int64, userID int64) (*model.Order, error)
 	FindItemsByOrderID(ctx context.Context, orderID int64) ([]model.OrderItem, error)
@@ -54,6 +56,39 @@ func (r *orderRepository) CreateItems(ctx context.Context, items []model.OrderIt
 
 func (r *orderRepository) Update(ctx context.Context, order *model.Order) error {
 	return r.db.WithContext(ctx).Save(order).Error
+}
+
+func (r *orderRepository) UpdateStatus(
+	ctx context.Context,
+	id int64,
+	userID int64,
+	currentStatus int,
+	nextStatus int,
+	paidAt *time.Time,
+	cancelledAt *time.Time,
+) error {
+	updates := map[string]interface{}{
+		"status": nextStatus,
+	}
+	if paidAt != nil {
+		updates["paid_at"] = paidAt
+	}
+	if cancelledAt != nil {
+		updates["cancelled_at"] = cancelledAt
+	}
+
+	result := r.db.WithContext(ctx).
+		Model(&model.Order{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, currentStatus).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("订单状态已变更")
+	}
+
+	return nil
 }
 
 func (r *orderRepository) FindByIDAndUserID(ctx context.Context, id int64, userID int64) (*model.Order, error) {

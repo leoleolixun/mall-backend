@@ -16,6 +16,10 @@ import (
 type OrderService interface {
 	Preview(ctx context.Context, userID int64, req dto.OrderPreviewRequest) (*dto.OrderPreviewResponse, error)
 	Create(ctx context.Context, userID int64, req dto.CreateOrderRequest) (*dto.OrderResponse, error)
+	List(ctx context.Context, userID int64, req dto.OrderListRequest) (*dto.PageResponse[dto.OrderResponse], error)
+	Detail(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
+	Cancel(ctx context.Context, userID int64, id int64) error
+	Pay(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
 }
 
 type orderService struct {
@@ -120,6 +124,19 @@ func toOrderResponse(order model.Order, items []model.OrderItem) *dto.OrderRespo
 		CancelledAt:     cancelledAt,
 		Items:           itemResponses,
 	}
+}
+
+func normalizeOrderPage(page int, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 50 {
+		pageSize = 50
+	}
+	return page, pageSize
 }
 
 func (s *orderService) Preview(
@@ -446,4 +463,154 @@ func (s *orderService) Create(
 	}
 
 	return toOrderResponse(*createdOrder, createdItems), nil
+}
+
+func (s *orderService) List(
+	ctx context.Context,
+	userID int64,
+	req dto.OrderListRequest,
+) (*dto.PageResponse[dto.OrderResponse], error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+
+	page, pageSize := normalizeOrderPage(req.Page, req.PageSize)
+	offset := (page - 1) * pageSize
+
+	orders, total, err := s.orderRepo.ListByUserID(ctx, userID, offset, pageSize, req.Status)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]dto.OrderResponse, 0, len(orders))
+	for _, order := range orders {
+		items, err := s.orderRepo.FindItemsByOrderID(ctx, order.ID)
+		if err != nil {
+			return nil, err
+		}
+		resp := toOrderResponse(order, items)
+		list = append(list, *resp)
+	}
+
+	return &dto.PageResponse[dto.OrderResponse]{
+		List:     list,
+		Page:     page,
+		PageSize: pageSize,
+		Total:    total,
+	}, nil
+}
+
+func (s *orderService) Detail(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	if id <= 0 {
+		return nil, fmt.Errorf("订单 ID 不合法")
+	}
+
+	order, err := s.orderRepo.FindByIDAndUserID(ctx, id, userID)
+	if err != nil {
+		return nil, fmt.Errorf("订单不存在")
+	}
+
+	items, err := s.orderRepo.FindItemsByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return toOrderResponse(*order, items), nil
+}
+
+func (s *orderService) Cancel(ctx context.Context, userID int64, id int64) error {
+	if userID <= 0 {
+		return fmt.Errorf("用户未登录")
+	}
+	if id <= 0 {
+		return fmt.Errorf("订单 ID 不合法")
+	}
+
+	return s.orderRepo.Transaction(ctx, func(repo repository.OrderRepository) error {
+		order, err := repo.FindByIDAndUserID(ctx, id, userID)
+		if err != nil {
+			return fmt.Errorf("订单不存在")
+		}
+
+		switch order.Status {
+		case model.OrderStatusPendingPayment:
+		case model.OrderStatusPaid:
+			return fmt.Errorf("已支付订单不能取消")
+		case model.OrderStatusCancelled:
+			return fmt.Errorf("订单已取消")
+		default:
+			return fmt.Errorf("当前订单状态不能取消")
+		}
+
+		items, err := repo.FindItemsByOrderID(ctx, order.ID)
+		if err != nil {
+			return err
+		}
+
+		now := time.Now()
+		if err := repo.UpdateStatus(
+			ctx,
+			order.ID,
+			userID,
+			model.OrderStatusPendingPayment,
+			model.OrderStatusCancelled,
+			nil,
+			&now,
+		); err != nil {
+			return err
+		}
+
+		for _, item := range items {
+			if err := repo.IncreaseSKUStock(ctx, item.SKUID, item.Quantity); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+}
+
+func (s *orderService) Pay(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	if id <= 0 {
+		return nil, fmt.Errorf("订单 ID 不合法")
+	}
+
+	err := s.orderRepo.Transaction(ctx, func(repo repository.OrderRepository) error {
+		order, err := repo.FindByIDAndUserID(ctx, id, userID)
+		if err != nil {
+			return fmt.Errorf("订单不存在")
+		}
+
+		switch order.Status {
+		case model.OrderStatusPendingPayment:
+		case model.OrderStatusPaid:
+			return fmt.Errorf("订单已支付")
+		case model.OrderStatusCancelled:
+			return fmt.Errorf("已取消订单不能支付")
+		default:
+			return fmt.Errorf("当前订单状态不能支付")
+		}
+
+		now := time.Now()
+		return repo.UpdateStatus(
+			ctx,
+			order.ID,
+			userID,
+			model.OrderStatusPendingPayment,
+			model.OrderStatusPaid,
+			&now,
+			nil,
+		)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return s.Detail(ctx, userID, id)
 }

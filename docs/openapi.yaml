@@ -920,7 +920,7 @@ paths:
       tags:
         - Order
       summary: 订单列表
-      description: 规划接口，后端尚未实现。
+      description: 查询当前用户自己的订单列表。
       operationId: listOrders
       security:
         - bearerAuth: []
@@ -966,7 +966,7 @@ paths:
       tags:
         - Order
       summary: 创建订单
-      description: 规划接口，后端尚未实现。第一版从购物车选择 SKU 创建订单。
+      description: 根据订单预览生成的幂等 token 创建订单，第一版从购物车选择 SKU 创建订单。
       operationId: createOrder
       security:
         - bearerAuth: []
@@ -998,7 +998,7 @@ paths:
       tags:
         - Order
       summary: 订单详情
-      description: 规划接口，后端尚未实现。
+      description: 查询当前用户自己的订单详情。
       operationId: getOrderDetail
       security:
         - bearerAuth: []
@@ -1026,7 +1026,7 @@ paths:
       tags:
         - Order
       summary: 取消订单
-      description: 规划接口，后端尚未实现。第一版仅允许取消待支付订单。
+      description: 第一版仅允许取消待支付订单，取消成功后恢复 SKU 库存。
       operationId: cancelOrder
       security:
         - bearerAuth: []
@@ -1045,7 +1045,7 @@ paths:
       tags:
         - Order
       summary: 模拟支付订单
-      description: 规划接口，后端尚未实现。第一版只做模拟支付，不接真实微信支付。
+      description: 第一版只做模拟支付，不接真实微信支付。
       operationId: payOrder
       security:
         - bearerAuth: []
@@ -3625,6 +3625,7 @@ components:
       type: object
       required:
         - address_id
+        - idempotency_token
         - items
       properties:
         address_id:
@@ -3656,6 +3657,10 @@ components:
           type: string
           description: 买家备注
           example: 请工作日配送
+        idempotency_token:
+          type: string
+          description: 订单预览接口返回的幂等 token
+          example: 7a2c1f80-0000-0000-0000-000000000000
         items:
           type: array
           minItems: 1
