@@ -61,6 +61,7 @@ POST /api/v1/orders/{id}/pay
 ```http
 POST /api/v1/payments
 GET  /api/v1/payments/{payment_no}
+POST /api/v1/payments/{payment_no}/mock-complete
 POST /api/v1/orders/{id}/pay
 ```
 
@@ -69,6 +70,8 @@ POST /api/v1/orders/{id}/pay
 - [x] 待支付订单可以创建支付单
 - [x] 同一订单同一渠道重复创建支付单会返回已有待支付支付单
 - [x] 订单 mock 支付会创建或复用 mock 支付单，并更新订单为已支付
+- [x] 支付单 mock 完成支付会更新支付单和订单状态
+- [x] mock/wechat/alipay 渠道会返回不同的 mock 支付参数
 - [x] 已支付订单不能再创建支付单
 - [x] 用户只能查询自己的支付单
 

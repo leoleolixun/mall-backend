@@ -74,6 +74,7 @@ func NewRouter(
 
 			protected.POST("/payments", paymentHandler.Create)
 			protected.GET("/payments/:payment_no", paymentHandler.Detail)
+			protected.POST("/payments/:payment_no/mock-complete", paymentHandler.MockComplete)
 		}
 	}
 

@@ -1190,6 +1190,34 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/payments/{payment_no}/mock-complete:
+    post:
+      tags:
+        - Payment
+      summary: 模拟完成支付
+      description: 第一版联调用接口，用于把待支付支付单模拟更新为已支付，并同步更新订单为已支付。
+      operationId: mockCompletePayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentNo"
+      responses:
+        "200":
+          description: 支付完成
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/payments/wechat/notify:
     post:
       tags:

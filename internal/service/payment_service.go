@@ -18,6 +18,7 @@ import (
 type PaymentService interface {
 	Create(ctx context.Context, userID int64, req dto.CreatePaymentRequest) (*dto.PaymentResponse, error)
 	Detail(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
+	MockComplete(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
 	MockPayOrder(ctx context.Context, userID int64, orderID int64) (*dto.PaymentResponse, error)
 }
 
@@ -104,6 +105,25 @@ func toPaymentResponse(payment model.Payment) *dto.PaymentResponse {
 		resp.PayParams = map[string]interface{}{
 			"mock":       true,
 			"payment_no": payment.PaymentNo,
+		}
+	}
+	if payment.PayChannel == model.PayChannelWechat {
+		resp.PayParams = map[string]interface{}{
+			"mock":       true,
+			"mode":       "qr_code",
+			"code_url":   fmt.Sprintf("weixin://wxpay/bizpayurl?pr=%s", payment.PaymentNo),
+			"payment_no": payment.PaymentNo,
+			"expires_in": 300,
+		}
+	}
+	if payment.PayChannel == model.PayChannelAlipay {
+		resp.PayParams = map[string]interface{}{
+			"mock":        true,
+			"mode":        "qr_code",
+			"qr_code_url": fmt.Sprintf("https://openapi.alipay.com/gateway.do?mock_payment_no=%s", payment.PaymentNo),
+			"payment_no":  payment.PaymentNo,
+			"expires_in":  300,
+			"return_mode": "web",
 		}
 	}
 
@@ -193,6 +213,71 @@ func (s *paymentService) Detail(ctx context.Context, userID int64, paymentNo str
 	}
 
 	return toPaymentResponse(*payment), nil
+}
+
+func (s *paymentService) MockComplete(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+
+	paymentNo = strings.TrimSpace(paymentNo)
+	if paymentNo == "" {
+		return nil, fmt.Errorf("支付单号不能为空")
+	}
+
+	var result *model.Payment
+	err := s.paymentRepo.Transaction(ctx, func(repo repository.PaymentRepository) error {
+		payment, err := repo.FindByPaymentNoAndUserID(ctx, paymentNo, userID)
+		if err != nil {
+			return fmt.Errorf("支付单不存在")
+		}
+
+		if payment.Status == model.PaymentStatusPaid {
+			result = payment
+			return nil
+		}
+		if payment.Status != model.PaymentStatusPending {
+			return fmt.Errorf("当前支付单状态不能完成支付")
+		}
+
+		order, err := repo.FindOrderByIDAndUserID(ctx, payment.OrderID, userID)
+		if err != nil {
+			return fmt.Errorf("订单不存在")
+		}
+		if order.Status == model.OrderStatusPaid {
+			return fmt.Errorf("订单已支付")
+		}
+		if order.Status != model.OrderStatusPendingPayment {
+			return fmt.Errorf("当前订单状态不能支付")
+		}
+
+		now := time.Now()
+		transactionID := generateMockTransactionID()
+		if err := repo.MarkPaid(ctx, payment.ID, userID, transactionID, now); err != nil {
+			return err
+		}
+		if err := repo.UpdateOrderStatus(
+			ctx,
+			order.ID,
+			userID,
+			model.OrderStatusPendingPayment,
+			model.OrderStatusPaid,
+			&now,
+		); err != nil {
+			return err
+		}
+
+		payment.Status = model.PaymentStatusPaid
+		payment.TransactionID = transactionID
+		payment.PaidAt = &now
+		result = payment
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return toPaymentResponse(*result), nil
 }
 
 func (s *paymentService) MockPayOrder(ctx context.Context, userID int64, orderID int64) (*dto.PaymentResponse, error) {

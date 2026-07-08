@@ -58,3 +58,19 @@ func (h *PaymentHandler) Detail(c *gin.Context) {
 
 	response.Success(c, result)
 }
+
+func (h *PaymentHandler) MockComplete(c *gin.Context) {
+	userID, ok := middleware.CurrentUserID(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "未登录")
+		return
+	}
+
+	result, err := h.paymentService.MockComplete(c.Request.Context(), userID, c.Param("payment_no"))
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+
+	response.Success(c, result)
+}
