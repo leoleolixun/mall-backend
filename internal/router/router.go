@@ -49,6 +49,7 @@ func NewRouter(
 		protected.Use(middleware.Auth(jwtCfg))
 		{
 			protected.GET("/me", authHandler.Me)
+			protected.PUT("/me", authHandler.UpdateProfile)
 			protected.POST("/auth/logout", authHandler.Logout)
 
 			protected.GET("/addresses", addressHandler.List)

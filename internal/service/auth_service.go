@@ -12,6 +12,7 @@ import (
 	"go-mall/pkg/password"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -25,6 +26,7 @@ type AuthService interface {
 	Refresh(ctx context.Context, refreshToken string) (*dto.AuthResponse, error)
 	Logout(ctx context.Context, refreshToken string) error
 	Me(ctx context.Context, userID int64) (*dto.UserResponse, error)
+	UpdateProfile(ctx context.Context, userID int64, req dto.UpdateProfileRequest) (*dto.UserResponse, error)
 }
 
 type authService struct {
@@ -43,6 +45,30 @@ func NewAuthService(authRepo repository.AuthRepository, redis *redis.Client, jwt
 
 func refreshTokenKey(refreshToken string) string {
 	return fmt.Sprintf("mall:auth:refresh:%s", refreshToken)
+}
+
+func isElevenDigitMobile(mobile string) bool {
+	if len(mobile) != 11 {
+		return false
+	}
+	for _, char := range mobile {
+		if !unicode.IsDigit(char) {
+			return false
+		}
+	}
+	return true
+}
+
+func toUserResponse(user *model.User) dto.UserResponse {
+	return dto.UserResponse{
+		ID:       user.ID,
+		Nickname: user.Nickname,
+		Avatar:   user.Avatar,
+		Mobile:   user.Mobile,
+		Gender:   user.Gender,
+		Birthday: user.Birthday,
+		Bio:      user.Bio,
+	}
 }
 
 func (s *authService) buildAuthResponse(ctx context.Context, user *model.User) (*dto.AuthResponse, error) {
@@ -69,12 +95,7 @@ func (s *authService) buildAuthResponse(ctx context.Context, user *model.User) (
 	return &dto.AuthResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
-		User: dto.UserResponse{
-			ID:       user.ID,
-			Nickname: user.Nickname,
-			Avatar:   user.Avatar,
-			Mobile:   user.Mobile,
-		},
+		User:         toUserResponse(user),
 	}, nil
 }
 
@@ -227,10 +248,55 @@ func (s *authService) Me(ctx context.Context, userID int64) (*dto.UserResponse, 
 		return nil, err
 	}
 
-	return &dto.UserResponse{
-		ID:       user.ID,
-		Nickname: user.Nickname,
-		Avatar:   user.Avatar,
-		Mobile:   user.Mobile,
-	}, nil
+	resp := toUserResponse(user)
+	return &resp, nil
+}
+
+func (s *authService) UpdateProfile(ctx context.Context, userID int64, req dto.UpdateProfileRequest) (*dto.UserResponse, error) {
+	req.Nickname = strings.TrimSpace(req.Nickname)
+	req.Avatar = strings.TrimSpace(req.Avatar)
+	req.Mobile = strings.TrimSpace(req.Mobile)
+	req.Gender = strings.TrimSpace(req.Gender)
+	req.Birthday = strings.TrimSpace(req.Birthday)
+	req.Bio = strings.TrimSpace(req.Bio)
+
+	if req.Nickname == "" {
+		return nil, fmt.Errorf("昵称不能为空")
+	}
+	if len([]rune(req.Nickname)) > 100 {
+		return nil, fmt.Errorf("昵称不能超过100个字符")
+	}
+	if len(req.Avatar) > 255 {
+		return nil, fmt.Errorf("头像地址不能超过255个字符")
+	}
+	if req.Mobile != "" && !isElevenDigitMobile(req.Mobile) {
+		return nil, fmt.Errorf("手机号必须为11位")
+	}
+	if req.Gender != "" && req.Gender != "保密" && req.Gender != "男" && req.Gender != "女" {
+		return nil, fmt.Errorf("性别参数不合法")
+	}
+	if len(req.Birthday) > 20 {
+		return nil, fmt.Errorf("生日格式不合法")
+	}
+	if len([]rune(req.Bio)) > 500 {
+		return nil, fmt.Errorf("个人简介不能超过500个字符")
+	}
+
+	user, err := s.authRepo.FindUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	user.Nickname = req.Nickname
+	user.Avatar = req.Avatar
+	user.Mobile = req.Mobile
+	user.Gender = req.Gender
+	user.Birthday = req.Birthday
+	user.Bio = req.Bio
+	if err := s.authRepo.UpdateUser(ctx, user); err != nil {
+		return nil, err
+	}
+
+	resp := toUserResponse(user)
+	return &resp, nil
 }

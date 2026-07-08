@@ -22,6 +22,18 @@ type UserResponse struct {
 	Nickname string `json:"nickname"`
 	Avatar   string `json:"avatar"`
 	Mobile   string `json:"mobile"`
+	Gender   string `json:"gender"`
+	Birthday string `json:"birthday"`
+	Bio      string `json:"bio"`
+}
+
+type UpdateProfileRequest struct {
+	Nickname string `json:"nickname"`
+	Avatar   string `json:"avatar"`
+	Mobile   string `json:"mobile"`
+	Gender   string `json:"gender"`
+	Birthday string `json:"birthday"`
+	Bio      string `json:"bio"`
 }
 
 type RefreshTokenRequest struct {

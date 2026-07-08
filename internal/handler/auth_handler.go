@@ -75,6 +75,27 @@ func (h *AuthHandler) Me(c *gin.Context) {
 	response.Success(c, user)
 }
 
+func (h *AuthHandler) UpdateProfile(c *gin.Context) {
+	userID, ok := middleware.CurrentUserID(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "未登录")
+		return
+	}
+
+	var req dto.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "参数错误")
+		return
+	}
+
+	user, err := h.authService.UpdateProfile(c.Request.Context(), userID, req)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+	response.Success(c, user)
+}
+
 func (h *AuthHandler) Refresh(c *gin.Context) {
 	var req dto.RefreshTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

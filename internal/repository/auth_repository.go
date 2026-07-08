@@ -13,6 +13,7 @@ type AuthRepository interface {
 	CreateUserWithAuth(ctx context.Context, user *model.User, auth *model.UserAuth) error
 	FindAuthByProvider(ctx context.Context, provider string, providerUID string) (*model.UserAuth, error)
 	FindUserByID(ctx context.Context, userID int64) (*model.User, error)
+	UpdateUser(ctx context.Context, user *model.User) error
 }
 
 type authRepository struct {
@@ -62,4 +63,8 @@ func (r *authRepository) FindUserByID(ctx context.Context, userID int64) (*model
 		return nil, err
 	}
 	return &user, nil
+}
+
+func (r *authRepository) UpdateUser(ctx context.Context, user *model.User) error {
+	return r.db.WithContext(ctx).Save(user).Error
 }
