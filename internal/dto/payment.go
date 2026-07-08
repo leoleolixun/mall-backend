@@ -18,6 +18,7 @@ type PaymentResponse struct {
 	Amount        int64   `json:"amount"`
 	TransactionID string  `json:"transaction_id"`
 	FailureReason string  `json:"failure_reason"`
+	PayParams     any     `json:"pay_params,omitempty"`
 	PaidAt        *string `json:"paid_at"`
 	ClosedAt      *string `json:"closed_at"`
 }

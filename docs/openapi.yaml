@@ -1045,7 +1045,7 @@ paths:
       tags:
         - Order
       summary: 模拟支付订单
-      description: 第一版只做模拟支付，不接真实微信支付。
+      description: 第一版只做模拟支付，不接真实微信支付；接口会创建一条 mock 支付单并更新订单为已支付。
       operationId: payOrder
       security:
         - bearerAuth: []
@@ -1135,7 +1135,7 @@ paths:
       tags:
         - Payment
       summary: 创建支付单
-      description: 规划接口，后端尚未实现。第一版可返回 mock 支付信息，后续接微信支付。
+      description: 为待支付订单创建支付单。第一版返回 mock 支付参数，后续接微信支付或支付宝。
       operationId: createPayment
       security:
         - bearerAuth: []
@@ -1167,7 +1167,7 @@ paths:
       tags:
         - Payment
       summary: 查询支付单
-      description: 规划接口，后端尚未实现。
+      description: 根据支付单号查询当前用户自己的支付单。
       operationId: getPayment
       security:
         - bearerAuth: []
@@ -3693,6 +3693,7 @@ components:
           enum:
             - mock
             - wechat
+            - alipay
           default: mock
           example: mock
 
@@ -3701,6 +3702,7 @@ components:
       enum:
         - mock
         - wechat
+        - alipay
       example: mock
 
     PaymentStatus:
@@ -3710,12 +3712,14 @@ components:
         1 待支付
         2 已支付
         3 已关闭
-        4 已退款
+        4 支付失败
+        5 已退款
       enum:
         - 1
         - 2
         - 3
         - 4
+        - 5
       example: 1
 
     CreatePaymentRequest:

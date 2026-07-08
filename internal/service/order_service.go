@@ -19,7 +19,6 @@ type OrderService interface {
 	List(ctx context.Context, userID int64, req dto.OrderListRequest) (*dto.PageResponse[dto.OrderResponse], error)
 	Detail(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
 	Cancel(ctx context.Context, userID int64, id int64) error
-	Pay(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
 }
 
 type orderService struct {
@@ -571,46 +570,4 @@ func (s *orderService) Cancel(ctx context.Context, userID int64, id int64) error
 
 		return nil
 	})
-}
-
-func (s *orderService) Pay(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error) {
-	if userID <= 0 {
-		return nil, fmt.Errorf("用户未登录")
-	}
-	if id <= 0 {
-		return nil, fmt.Errorf("订单 ID 不合法")
-	}
-
-	err := s.orderRepo.Transaction(ctx, func(repo repository.OrderRepository) error {
-		order, err := repo.FindByIDAndUserID(ctx, id, userID)
-		if err != nil {
-			return fmt.Errorf("订单不存在")
-		}
-
-		switch order.Status {
-		case model.OrderStatusPendingPayment:
-		case model.OrderStatusPaid:
-			return fmt.Errorf("订单已支付")
-		case model.OrderStatusCancelled:
-			return fmt.Errorf("已取消订单不能支付")
-		default:
-			return fmt.Errorf("当前订单状态不能支付")
-		}
-
-		now := time.Now()
-		return repo.UpdateStatus(
-			ctx,
-			order.ID,
-			userID,
-			model.OrderStatusPendingPayment,
-			model.OrderStatusPaid,
-			&now,
-			nil,
-		)
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return s.Detail(ctx, userID, id)
 }

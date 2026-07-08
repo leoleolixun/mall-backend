@@ -12,12 +12,14 @@ import (
 )
 
 type OrderHandler struct {
-	orderService service.OrderService
+	orderService   service.OrderService
+	paymentService service.PaymentService
 }
 
-func NewOrderHandler(orderService service.OrderService) *OrderHandler {
+func NewOrderHandler(orderService service.OrderService, paymentService service.PaymentService) *OrderHandler {
 	return &OrderHandler{
-		orderService: orderService,
+		orderService:   orderService,
+		paymentService: paymentService,
 	}
 }
 
@@ -147,7 +149,12 @@ func (h *OrderHandler) Pay(c *gin.Context) {
 		return
 	}
 
-	result, err := h.orderService.Pay(c.Request.Context(), userID, id)
+	if _, err := h.paymentService.MockPayOrder(c.Request.Context(), userID, id); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+
+	result, err := h.orderService.Detail(c.Request.Context(), userID, id)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return

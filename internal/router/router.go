@@ -18,6 +18,7 @@ func NewRouter(
 	addressHandler *handler.AddressHandler,
 	cartHandler *handler.CartHandler,
 	orderHandler *handler.OrderHandler,
+	paymentHandler *handler.PaymentHandler,
 	jwtCfg config.JWTConfig,
 ) *gin.Engine {
 	r := gin.New()
@@ -70,6 +71,9 @@ func NewRouter(
 			protected.GET("/orders/:id", orderHandler.Detail)
 			protected.POST("/orders/:id/cancel", orderHandler.Cancel)
 			protected.POST("/orders/:id/pay", orderHandler.Pay)
+
+			protected.POST("/payments", paymentHandler.Create)
+			protected.GET("/payments/:payment_no", paymentHandler.Detail)
 		}
 	}
 
