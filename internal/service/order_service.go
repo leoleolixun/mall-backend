@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -46,6 +45,19 @@ func NewOrderService(
 func orderIdempotencyKey(userID int64, token string) string {
 	return fmt.Sprintf("mall:order:idempotency:%d:%s", userID, token)
 }
+
+const acquireOrderIdempotencyScript = `
+local value = redis.call("GET", KEYS[1])
+if not value then
+	redis.call("SET", KEYS[1], "processing", "EX", ARGV[1])
+	return "accepted"
+end
+if value == "pending" then
+	redis.call("SET", KEYS[1], "processing", "EX", ARGV[1])
+	return "accepted"
+end
+return value
+`
 
 func generateOrderNo() string {
 	return fmt.Sprintf("O%s%s", time.Now().Format("20060102150405"), uuid.NewString()[:8])
@@ -137,6 +149,29 @@ func normalizeOrderPage(page int, pageSize int) (int, int) {
 		pageSize = 50
 	}
 	return page, pageSize
+}
+
+func (s *orderService) acquireOrderIdempotencyToken(ctx context.Context, userID int64, token string) (string, error) {
+	result, err := s.redisClient.Eval(
+		ctx,
+		acquireOrderIdempotencyScript,
+		[]string{orderIdempotencyKey(userID, token)},
+		int((15 * time.Minute).Seconds()),
+	).Result()
+	if err != nil {
+		return "", fmt.Errorf("订单幂等校验失败，请稍后重试")
+	}
+
+	value, ok := result.(string)
+	if !ok {
+		return "", fmt.Errorf("订单幂等校验失败，请稍后重试")
+	}
+
+	if value != "accepted" {
+		return value, fmt.Errorf("订单已提交，请勿重复提交")
+	}
+
+	return value, nil
 }
 
 func (s *orderService) Preview(
@@ -316,16 +351,9 @@ func (s *orderService) Create(
 
 	tokenKey := orderIdempotencyKey(userID, req.IdempotencyToken)
 
-	tokenValue, err := s.redisClient.GetDel(ctx, tokenKey).Result()
+	_, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken)
 	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("订单预览已过期，请重新预览订单")
-		}
-		return nil, fmt.Errorf("订单预览校验失败，请稍后重试")
-	}
-
-	if tokenValue != "pending" {
-		return nil, fmt.Errorf("订单已提交，请勿重复提交")
+		return nil, err
 	}
 
 	quantityMap := make(map[int64]int)
@@ -458,8 +486,11 @@ func (s *orderService) Create(
 		return nil
 	})
 	if err != nil {
+		_ = s.redisClient.Del(ctx, tokenKey).Err()
 		return nil, err
 	}
+
+	_ = s.redisClient.Set(ctx, tokenKey, fmt.Sprintf("order:%d", createdOrder.ID), 24*time.Hour).Err()
 
 	for skuID := range quantityMap {
 		_ = s.redisClient.HDel(ctx, cartKey(userID), fmt.Sprintf("%d", skuID)).Err()
