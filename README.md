@@ -174,7 +174,6 @@ CI/CD 中会构建 `go-mall-migrate`，部署时执行：
 go test
 go vet
 build server/migrate
-写入运行时配置和支付宝密钥
 上传服务器
 执行数据库迁移
 重启 systemd 服务
@@ -188,17 +187,24 @@ SERVER_HOST
 SERVER_PORT
 SERVER_USER
 SERVER_SSH_KEY
-BACKEND_CONFIG_YAML_B64
-ALIPAY_APP_PRIVATE_KEY_B64
-ALIPAY_PUBLIC_KEY_B64
 ```
 
-生成 base64：
+运行时配置不经过 GitHub Actions。服务器需要长期保存：
+
+```text
+/opt/mall/backend/config.yaml
+/opt/mall/backend/internal/config/alipay/app_private_key.pem
+/opt/mall/backend/internal/config/alipay/alipay_public_key.pem
+```
+
+CI/CD 只上传二进制和 OpenAPI 文档，不覆盖服务器上的 `config.yaml` 和支付宝密钥。第一次部署前需要手动创建这些文件：
 
 ```bash
-base64 -i config.yaml | pbcopy
-base64 -i internal/config/alipay/app_private_key.pem | pbcopy
-base64 -i internal/config/alipay/alipay_public_key.pem | pbcopy
+sudo mkdir -p /opt/mall/backend/internal/config/alipay
+sudo cp config.yaml /opt/mall/backend/config.yaml
+sudo cp internal/config/alipay/app_private_key.pem /opt/mall/backend/internal/config/alipay/app_private_key.pem
+sudo cp internal/config/alipay/alipay_public_key.pem /opt/mall/backend/internal/config/alipay/alipay_public_key.pem
+sudo chmod 600 /opt/mall/backend/config.yaml /opt/mall/backend/internal/config/alipay/*.pem
 ```
 
 服务器默认部署目录：
