@@ -12,6 +12,9 @@ env:
 
 jobs:
   deploy:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      contains(join(github.event.commits.*.message, '\n'), '[deploy]')
     runs-on: ubuntu-latest
 
     steps:

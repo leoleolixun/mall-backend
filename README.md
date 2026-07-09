@@ -168,7 +168,14 @@ CI/CD 中会构建 `go-mall-migrate`，部署时执行：
 .github/workflows/deploy-backend.yml
 ```
 
-推送到 `main` 后自动执行：
+只有以下两种情况会部署到服务器：
+
+```text
+1. commit message 包含 [deploy]
+2. 在 GitHub Actions 页面手动 Run workflow
+```
+
+部署时才会执行测试、构建和发布：
 
 ```text
 go test
@@ -178,6 +185,64 @@ build server/migrate
 执行数据库迁移
 重启 systemd 服务
 检查 /health
+```
+
+触发部署示例：
+
+```bash
+git commit -m "feat(order): 增加商家发货接口 [deploy]"
+git push
+```
+
+只提交代码或文档但不部署：
+
+```bash
+git commit -m "docs(readme): 更新部署说明"
+git push
+```
+
+## 提交与部署约定
+
+提交信息遵循：
+
+```text
+<type>(<scope>): <subject>
+```
+
+示例：
+
+```bash
+git commit -m "feat(order): 增加商家发货接口"
+git commit -m "docs(readme): 更新部署说明"
+git commit -m "chore(ci): 调整后端部署流程"
+```
+
+后续让 Codex 代为提交和推送时，默认规则：
+
+```text
+普通提交：不添加 [deploy]，只推送代码，不触发部署。
+部署提交：提交信息末尾添加 [deploy]，推送后触发 GitHub Actions 部署。
+```
+
+例如：
+
+```bash
+git commit -m "feat(payment): 优化支付宝回调处理 [deploy]"
+git push
+```
+
+如果只说“提交并推送”，默认不部署。
+
+如果需要部署，明确说：
+
+```text
+提交并推送，触发部署
+```
+
+或：
+
+```text
+提交并推送，加 [deploy]
 ```
 
 GitHub Secrets：

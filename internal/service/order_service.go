@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -317,7 +318,10 @@ func (s *orderService) Create(
 
 	tokenValue, err := s.redisClient.GetDel(ctx, tokenKey).Result()
 	if err != nil {
-		return nil, fmt.Errorf("请重新预览订单")
+		if errors.Is(err, redis.Nil) {
+			return nil, fmt.Errorf("订单预览已过期，请重新预览订单")
+		}
+		return nil, fmt.Errorf("订单预览校验失败，请稍后重试")
 	}
 
 	if tokenValue != "pending" {
