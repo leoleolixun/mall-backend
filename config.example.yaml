@@ -29,3 +29,43 @@ jwt:
   access_secret: change_me
   access_ttl_minutes: 120
   refresh_ttl_hours: 168
+
+payment:
+  alipay:
+    # true 表示启用支付宝真实支付；false 时 alipay 支付会直接返回配置错误。
+    enabled: false
+    # 沙箱环境填 true；正式线上环境填 false。
+    sandbox: true
+    app_id: "your_alipay_app_id"
+
+    # 推荐使用文件路径，不要把真实私钥提交到代码仓库。
+    app_private_key_path: "configs/alipay/app_private_key.pem"
+    # 也支持直接写入完整私钥内容，生产环境不推荐。
+    app_private_key: ""
+
+    # 普通公钥模式：配置支付宝公钥。证书模式和普通公钥模式二选一。
+    alipay_public_key_path: "configs/alipay/alipay_public_key.pem"
+    alipay_public_key: ""
+
+    # 证书模式：如果启用证书模式，需要同时配置下面三个路径，并清空普通支付宝公钥配置。
+    app_cert_public_key_path: ""
+    alipay_root_cert_path: ""
+    alipay_cert_public_key_path: ""
+
+    # 必须是公网可访问的 HTTPS 地址，支付宝支付成功后会 POST 回调这里。
+    notify_url: "https://api.example.com/api/v1/payments/alipay/notify"
+
+    page:
+      # PC 网页支付，当前优先接入这个。
+      enabled: true
+      return_url: "https://www.example.com/payment/result"
+      product_code: "FAST_INSTANT_TRADE_PAY"
+      timeout_express: "15m"
+
+    wap:
+      # H5 支付预留。你后续签约并联调 H5 时再打开。
+      enabled: false
+      return_url: "https://m.example.com/payment/result"
+      quit_url: "https://m.example.com/cart"
+      product_code: "QUICK_WAP_WAY"
+      timeout_express: "15m"

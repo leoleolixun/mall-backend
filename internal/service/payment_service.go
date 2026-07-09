@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	"go-mall/internal/config"
 	"go-mall/internal/dto"
 	"go-mall/internal/model"
 	"go-mall/internal/repository"
@@ -18,17 +20,20 @@ import (
 type PaymentService interface {
 	Create(ctx context.Context, userID int64, req dto.CreatePaymentRequest) (*dto.PaymentResponse, error)
 	Detail(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
+	AlipayNotify(ctx context.Context, values url.Values) error
 	MockComplete(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
 	MockPayOrder(ctx context.Context, userID int64, orderID int64) (*dto.PaymentResponse, error)
 }
 
 type paymentService struct {
 	paymentRepo repository.PaymentRepository
+	paymentCfg  config.PaymentConfig
 }
 
-func NewPaymentService(paymentRepo repository.PaymentRepository) PaymentService {
+func NewPaymentService(paymentRepo repository.PaymentRepository, paymentCfg config.PaymentConfig) PaymentService {
 	return &paymentService{
 		paymentRepo: paymentRepo,
+		paymentCfg:  paymentCfg,
 	}
 }
 
@@ -71,6 +76,44 @@ func normalizePayChannel(payChannel string) (string, error) {
 	}
 }
 
+func normalizePayScene(payChannel string, payScene string) (string, error) {
+	payScene = strings.TrimSpace(payScene)
+	if payChannel == model.PayChannelMock {
+		return model.PaySceneMock, nil
+	}
+
+	if payChannel == model.PayChannelAlipay {
+		if payScene == "" {
+			return model.PaySceneAlipayPage, nil
+		}
+		switch payScene {
+		case model.PaySceneAlipayPage, model.PaySceneAlipayWap:
+			return payScene, nil
+		default:
+			return "", fmt.Errorf("支付宝支付场景不支持")
+		}
+	}
+
+	if payScene == "" {
+		return payChannel, nil
+	}
+	return payScene, nil
+}
+
+func effectivePayScene(payChannel string, payScene string) string {
+	payScene = strings.TrimSpace(payScene)
+	if payScene != "" {
+		return payScene
+	}
+	if payChannel == model.PayChannelMock {
+		return model.PaySceneMock
+	}
+	if payChannel == model.PayChannelAlipay {
+		return model.PaySceneAlipayPage
+	}
+	return payChannel
+}
+
 func toPaymentResponse(payment model.Payment) *dto.PaymentResponse {
 	var paidAt *string
 	if payment.PaidAt != nil {
@@ -92,6 +135,7 @@ func toPaymentResponse(payment model.Payment) *dto.PaymentResponse {
 		UserID:        payment.UserID,
 		MerchantID:    payment.MerchantID,
 		PayChannel:    payment.PayChannel,
+		PayScene:      effectivePayScene(payment.PayChannel, payment.PayScene),
 		Status:        payment.Status,
 		StatusText:    paymentStatusText(payment.Status),
 		Amount:        payment.Amount,
@@ -130,6 +174,20 @@ func toPaymentResponse(payment model.Payment) *dto.PaymentResponse {
 	return resp
 }
 
+func (s *paymentService) toPaymentResponse(ctx context.Context, payment model.Payment) (*dto.PaymentResponse, error) {
+	resp := toPaymentResponse(payment)
+	if payment.PayChannel != model.PayChannelAlipay || payment.Status != model.PaymentStatusPending {
+		return resp, nil
+	}
+
+	payParams, err := s.buildAlipayPayParams(ctx, payment)
+	if err != nil {
+		return nil, err
+	}
+	resp.PayParams = payParams
+	return resp, nil
+}
+
 func (s *paymentService) Create(ctx context.Context, userID int64, req dto.CreatePaymentRequest) (*dto.PaymentResponse, error) {
 	if userID <= 0 {
 		return nil, fmt.Errorf("用户未登录")
@@ -141,6 +199,15 @@ func (s *paymentService) Create(ctx context.Context, userID int64, req dto.Creat
 	payChannel, err := normalizePayChannel(req.PayChannel)
 	if err != nil {
 		return nil, err
+	}
+	payScene, err := normalizePayScene(payChannel, req.PayScene)
+	if err != nil {
+		return nil, err
+	}
+	if payChannel == model.PayChannelAlipay {
+		if err := s.validateAlipayPayScene(payScene); err != nil {
+			return nil, err
+		}
 	}
 
 	var result *model.Payment
@@ -160,7 +227,7 @@ func (s *paymentService) Create(ctx context.Context, userID int64, req dto.Creat
 			return fmt.Errorf("当前订单状态不能支付")
 		}
 
-		existing, err := repo.FindLatestByOrderIDUserIDChannel(ctx, order.ID, userID, payChannel)
+		existing, err := repo.FindLatestByOrderIDUserIDChannelScene(ctx, order.ID, userID, payChannel, payScene)
 		if err == nil {
 			if existing.Status == model.PaymentStatusPending {
 				result = existing
@@ -180,6 +247,7 @@ func (s *paymentService) Create(ctx context.Context, userID int64, req dto.Creat
 			UserID:     userID,
 			MerchantID: order.MerchantID,
 			PayChannel: payChannel,
+			PayScene:   payScene,
 			Status:     model.PaymentStatusPending,
 			Amount:     order.PayableAmount,
 		}
@@ -194,7 +262,7 @@ func (s *paymentService) Create(ctx context.Context, userID int64, req dto.Creat
 		return nil, err
 	}
 
-	return toPaymentResponse(*result), nil
+	return s.toPaymentResponse(ctx, *result)
 }
 
 func (s *paymentService) Detail(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error) {
@@ -212,7 +280,7 @@ func (s *paymentService) Detail(ctx context.Context, userID int64, paymentNo str
 		return nil, fmt.Errorf("支付单不存在")
 	}
 
-	return toPaymentResponse(*payment), nil
+	return s.toPaymentResponse(ctx, *payment)
 }
 
 func (s *paymentService) MockComplete(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error) {
@@ -308,7 +376,7 @@ func (s *paymentService) MockPayOrder(ctx context.Context, userID int64, orderID
 		now := time.Now()
 		transactionID := generateMockTransactionID()
 
-		existing, err := repo.FindLatestByOrderIDUserIDChannel(ctx, order.ID, userID, model.PayChannelMock)
+		existing, err := repo.FindLatestByOrderIDUserIDChannelScene(ctx, order.ID, userID, model.PayChannelMock, model.PaySceneMock)
 		if err == nil {
 			switch existing.Status {
 			case model.PaymentStatusPending:
@@ -329,6 +397,7 @@ func (s *paymentService) MockPayOrder(ctx context.Context, userID int64, orderID
 					UserID:        userID,
 					MerchantID:    order.MerchantID,
 					PayChannel:    model.PayChannelMock,
+					PayScene:      model.PaySceneMock,
 					Status:        model.PaymentStatusPaid,
 					Amount:        order.PayableAmount,
 					TransactionID: transactionID,
@@ -347,6 +416,7 @@ func (s *paymentService) MockPayOrder(ctx context.Context, userID int64, orderID
 				UserID:        userID,
 				MerchantID:    order.MerchantID,
 				PayChannel:    model.PayChannelMock,
+				PayScene:      model.PaySceneMock,
 				Status:        model.PaymentStatusPaid,
 				Amount:        order.PayableAmount,
 				TransactionID: transactionID,

@@ -3,6 +3,7 @@ package dto
 type CreatePaymentRequest struct {
 	OrderID    int64  `json:"order_id"`
 	PayChannel string `json:"pay_channel"`
+	PayScene   string `json:"pay_scene"`
 }
 
 type PaymentResponse struct {
@@ -13,6 +14,7 @@ type PaymentResponse struct {
 	UserID        int64   `json:"user_id"`
 	MerchantID    int64   `json:"merchant_id"`
 	PayChannel    string  `json:"pay_channel"`
+	PayScene      string  `json:"pay_scene"`
 	Status        int     `json:"status"`
 	StatusText    string  `json:"status_text"`
 	Amount        int64   `json:"amount"`

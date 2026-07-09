@@ -14,8 +14,9 @@ type PaymentRepository interface {
 	Transaction(ctx context.Context, fn func(repo PaymentRepository) error) error
 
 	Create(ctx context.Context, payment *model.Payment) error
+	FindByPaymentNo(ctx context.Context, paymentNo string) (*model.Payment, error)
 	FindByPaymentNoAndUserID(ctx context.Context, paymentNo string, userID int64) (*model.Payment, error)
-	FindLatestByOrderIDUserIDChannel(ctx context.Context, orderID int64, userID int64, payChannel string) (*model.Payment, error)
+	FindLatestByOrderIDUserIDChannelScene(ctx context.Context, orderID int64, userID int64, payChannel string, payScene string) (*model.Payment, error)
 	MarkPaid(ctx context.Context, id int64, userID int64, transactionID string, paidAt time.Time) error
 	FindOrderByIDAndUserID(ctx context.Context, orderID int64, userID int64) (*model.Order, error)
 	UpdateOrderStatus(ctx context.Context, orderID int64, userID int64, currentStatus int, nextStatus int, paidAt *time.Time) error
@@ -41,6 +42,18 @@ func (r *paymentRepository) Create(ctx context.Context, payment *model.Payment) 
 	return r.db.WithContext(ctx).Create(payment).Error
 }
 
+func (r *paymentRepository) FindByPaymentNo(ctx context.Context, paymentNo string) (*model.Payment, error) {
+	var payment model.Payment
+	err := r.db.WithContext(ctx).
+		Where("payment_no = ?", paymentNo).
+		First(&payment).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return &payment, nil
+}
+
 func (r *paymentRepository) FindByPaymentNoAndUserID(ctx context.Context, paymentNo string, userID int64) (*model.Payment, error) {
 	var payment model.Payment
 	err := r.db.WithContext(ctx).
@@ -53,15 +66,16 @@ func (r *paymentRepository) FindByPaymentNoAndUserID(ctx context.Context, paymen
 	return &payment, nil
 }
 
-func (r *paymentRepository) FindLatestByOrderIDUserIDChannel(
+func (r *paymentRepository) FindLatestByOrderIDUserIDChannelScene(
 	ctx context.Context,
 	orderID int64,
 	userID int64,
 	payChannel string,
+	payScene string,
 ) (*model.Payment, error) {
 	var payment model.Payment
 	err := r.db.WithContext(ctx).
-		Where("order_id = ? AND user_id = ? AND pay_channel = ?", orderID, userID, payChannel).
+		Where("order_id = ? AND user_id = ? AND pay_channel = ? AND pay_scene = ?", orderID, userID, payChannel, payScene).
 		Order("id DESC").
 		First(&payment).Error
 	if err != nil {

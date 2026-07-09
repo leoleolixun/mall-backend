@@ -37,6 +37,7 @@ func NewRouter(
 		api.GET("/products", productHandler.List)
 		api.GET("/products/:id", productHandler.Detail)
 		api.GET("/products/:id/skus", productHandler.SKUs)
+		api.POST("/payments/alipay/notify", paymentHandler.AlipayNotify)
 
 		auth := api.Group("/auth")
 		{

@@ -59,6 +59,20 @@ func (h *PaymentHandler) Detail(c *gin.Context) {
 	response.Success(c, result)
 }
 
+func (h *PaymentHandler) AlipayNotify(c *gin.Context) {
+	if err := c.Request.ParseForm(); err != nil {
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
+
+	if err := h.paymentService.AlipayNotify(c.Request.Context(), c.Request.Form); err != nil {
+		c.String(http.StatusOK, "fail")
+		return
+	}
+
+	c.String(http.StatusOK, "success")
+}
+
 func (h *PaymentHandler) MockComplete(c *gin.Context) {
 	userID, ok := middleware.CurrentUserID(c)
 	if !ok {

@@ -1,0 +1,95 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DEPLOY_DIR: /opt/mall/backend
+  SERVICE_NAME: go-mall
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build Linux binaries
+        run: |
+          set -euo pipefail
+          mkdir -p release/bin release/docs release/internal/config/alipay
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/go-mall-server ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/go-mall-migrate ./cmd/migrate
+          cp docs/openapi.yaml release/docs/openapi.yaml
+          chmod +x release/bin/go-mall-server release/bin/go-mall-migrate
+
+      - name: Write runtime config from secrets
+        run: |
+          set -euo pipefail
+          echo "${{ secrets.BACKEND_CONFIG_YAML_B64 }}" | base64 -d > release/config.yaml
+          echo "${{ secrets.ALIPAY_APP_PRIVATE_KEY_B64 }}" | base64 -d > release/internal/config/alipay/app_private_key.pem
+          echo "${{ secrets.ALIPAY_PUBLIC_KEY_B64 }}" | base64 -d > release/internal/config/alipay/alipay_public_key.pem
+          chmod 600 release/config.yaml release/internal/config/alipay/*.pem
+
+      - name: Package release
+        run: |
+          set -euo pipefail
+          tar -C release -czf go-mall-backend.tar.gz .
+
+      - name: Prepare SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SERVER_PORT }}" "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload release
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "${{ secrets.SERVER_PORT }}" \
+            go-mall-backend.tar.gz \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/go-mall-backend.tar.gz"
+
+      - name: Deploy on server
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.SERVER_PORT }}" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" <<'EOF'
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo"
+          fi
+
+          $SUDO mkdir -p "${{ env.DEPLOY_DIR }}"
+          $SUDO rm -rf /tmp/go-mall-backend-release
+          mkdir -p /tmp/go-mall-backend-release
+          tar -xzf /tmp/go-mall-backend.tar.gz -C /tmp/go-mall-backend-release
+          $SUDO find "${{ env.DEPLOY_DIR }}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          $SUDO cp -a /tmp/go-mall-backend-release/. "${{ env.DEPLOY_DIR }}/"
+          $SUDO chmod +x "${{ env.DEPLOY_DIR }}/bin/go-mall-server" "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate"
+          $SUDO chmod 600 "${{ env.DEPLOY_DIR }}/config.yaml" "${{ env.DEPLOY_DIR }}/internal/config/alipay/"*.pem
+
+          cd "${{ env.DEPLOY_DIR }}"
+          $SUDO ./bin/go-mall-migrate
+          $SUDO systemctl restart "${{ env.SERVICE_NAME }}"
+          sleep 2
+          curl -f http://127.0.0.1:8080/health
+          EOF

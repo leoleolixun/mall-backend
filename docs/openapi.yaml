@@ -1135,7 +1135,7 @@ paths:
       tags:
         - Payment
       summary: 创建支付单
-      description: 为待支付订单创建支付单。第一版返回 mock 支付参数，后续接微信支付或支付宝。
+      description: 为待支付订单创建支付单。mock 返回模拟参数；alipay/page 返回支付宝 PC 网页支付跳转链接；alipay/wap 为 H5 支付预留。
       operationId: createPayment
       security:
         - bearerAuth: []
@@ -1161,6 +1161,32 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/payments/alipay/notify:
+    post:
+      tags:
+        - Payment
+      summary: 支付宝支付异步通知
+      description: 支付宝服务器回调接口，不使用用户 JWT。后端会验签、校验金额，并把支付单和订单更新为已支付。该接口按支付宝要求返回纯文本 success 或 fail。
+      operationId: alipayPaymentNotify
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: 回调处理结果
+          content:
+            text/plain:
+              schema:
+                type: string
+                enum:
+                  - success
+                  - fail
+                example: success
 
   /api/v1/payments/{payment_no}:
     get:
@@ -3733,6 +3759,19 @@ components:
         - alipay
       example: mock
 
+    PaymentScene:
+      type: string
+      description: |
+        支付场景：
+        mock 模拟支付
+        page 支付宝 PC 网页支付
+        wap 支付宝 H5 支付
+      enum:
+        - mock
+        - page
+        - wap
+      example: page
+
     PaymentStatus:
       type: integer
       description: |
@@ -3763,6 +3802,8 @@ components:
           example: 1
         pay_channel:
           $ref: "#/components/schemas/PaymentChannel"
+        pay_scene:
+          $ref: "#/components/schemas/PaymentScene"
 
     Payment:
       type: object
@@ -3771,6 +3812,7 @@ components:
         - order_id
         - amount
         - pay_channel
+        - pay_scene
         - status
       properties:
         payment_no:
@@ -3787,11 +3829,13 @@ components:
           example: 1199800
         pay_channel:
           $ref: "#/components/schemas/PaymentChannel"
+        pay_scene:
+          $ref: "#/components/schemas/PaymentScene"
         status:
           $ref: "#/components/schemas/PaymentStatus"
         pay_params:
           type: object
-          description: 微信支付参数或 mock 支付参数
+          description: 支付参数。支付宝网页支付会返回 pay_url，前端可跳转该地址。
           additionalProperties: true
         paid_at:
           type: string

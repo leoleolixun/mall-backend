@@ -59,7 +59,7 @@ func main() {
 	addressService := service.NewAddressService(addressRepo)
 	cartService := service.NewCartService(rdb, productRepo)
 	orderService := service.NewOrderService(orderRepo, addressRepo, productRepo, rdb)
-	paymentService := service.NewPaymentService(paymentRepo)
+	paymentService := service.NewPaymentService(paymentRepo, cfg.Payment)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
