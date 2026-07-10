@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"go-mall/internal/dto"
@@ -165,10 +167,6 @@ func (s *orderService) acquireOrderIdempotencyToken(ctx context.Context, userID 
 	value, ok := result.(string)
 	if !ok {
 		return "", fmt.Errorf("订单幂等校验失败，请稍后重试")
-	}
-
-	if value != "accepted" {
-		return value, fmt.Errorf("订单已提交，请勿重复提交")
 	}
 
 	return value, nil
@@ -349,13 +347,6 @@ func (s *orderService) Create(
 		return nil, fmt.Errorf("订单商品不能为空")
 	}
 
-	tokenKey := orderIdempotencyKey(userID, req.IdempotencyToken)
-
-	_, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken)
-	if err != nil {
-		return nil, err
-	}
-
 	quantityMap := make(map[int64]int)
 	skuIDs := make([]int64, 0, len(req.Items))
 
@@ -372,6 +363,22 @@ func (s *orderService) Create(
 		}
 
 		quantityMap[item.SKUID] += item.Quantity
+	}
+
+	tokenKey := orderIdempotencyKey(userID, req.IdempotencyToken)
+	tokenState, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if tokenState != "accepted" {
+		if orderIDText, ok := strings.CutPrefix(tokenState, "order:"); ok {
+			orderID, parseErr := strconv.ParseInt(orderIDText, 10, 64)
+			if parseErr == nil && orderID > 0 {
+				return s.Detail(ctx, userID, orderID)
+			}
+		}
+		return nil, fmt.Errorf("订单正在处理，请勿重复提交")
 	}
 
 	var createdOrder *model.Order

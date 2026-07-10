@@ -6,9 +6,14 @@ on:
       - main
   workflow_dispatch:
 
+concurrency:
+  group: deploy-backend-production
+  cancel-in-progress: true
+
 env:
   DEPLOY_DIR: /opt/mall/backend
   SERVICE_NAME: go-mall
+  RELEASE_ARCHIVE: go-mall-backend-${{ github.sha }}.tar.gz
 
 jobs:
   deploy:
@@ -37,15 +42,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release/bin release/docs
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/go-mall-server ./cmd/server
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/go-mall-migrate ./cmd/migrate
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-server ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-migrate ./cmd/migrate
           cp docs/openapi.yaml release/docs/openapi.yaml
           chmod +x release/bin/go-mall-server release/bin/go-mall-migrate
 
       - name: Package release
         run: |
           set -euo pipefail
-          tar -C release -czf go-mall-backend.tar.gz .
+          tar -C release -czf "${RELEASE_ARCHIVE}" .
 
       - name: Prepare SSH
         run: |
@@ -59,8 +64,8 @@ jobs:
         run: |
           set -euo pipefail
           scp -i ~/.ssh/deploy_key -P "${{ secrets.SERVER_PORT }}" \
-            go-mall-backend.tar.gz \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/go-mall-backend.tar.gz"
+            "${RELEASE_ARCHIVE}" \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/${RELEASE_ARCHIVE}"
 
       - name: Deploy on server
         run: |
@@ -80,14 +85,17 @@ jobs:
           fi
           $SUDO rm -rf /tmp/go-mall-backend-release
           mkdir -p /tmp/go-mall-backend-release
-          tar -xzf /tmp/go-mall-backend.tar.gz -C /tmp/go-mall-backend-release
-          $SUDO cp -a /tmp/go-mall-backend-release/bin/. "${{ env.DEPLOY_DIR }}/bin/"
+          tar -xzf "/tmp/${{ env.RELEASE_ARCHIVE }}" -C /tmp/go-mall-backend-release
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-server "${{ env.DEPLOY_DIR }}/bin/go-mall-server.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-migrate "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-server.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-server"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate"
           $SUDO cp -a /tmp/go-mall-backend-release/docs/. "${{ env.DEPLOY_DIR }}/docs/"
-          $SUDO chmod +x "${{ env.DEPLOY_DIR }}/bin/go-mall-server" "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate"
 
           cd "${{ env.DEPLOY_DIR }}"
           $SUDO ./bin/go-mall-migrate
           $SUDO systemctl restart "${{ env.SERVICE_NAME }}"
           sleep 2
           curl -f http://127.0.0.1:8080/health
+          rm -f "/tmp/${{ env.RELEASE_ARCHIVE }}"
           EOF
