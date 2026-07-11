@@ -19,7 +19,7 @@ type Order struct {
 	OrderNo    string `gorm:"type:varchar(64);not null;uniqueIndex" json:"order_no"`
 	UserID     int64  `gorm:"not null;index" json:"user_id"`
 	MerchantID int64  `gorm:"not null;index" json:"merchant_id"`
-	Status     int    `gorm:"not null;default:1;index" json:"status"`
+	Status     int    `gorm:"not null;default:1;index;index:idx_orders_status_created_at,priority:1" json:"status"`
 
 	ReceiverName    string `gorm:"type:varchar(100);not null" json:"receiver_name"`
 	ReceiverPhone   string `gorm:"type:varchar(20);not null" json:"receiver_phone"`
@@ -33,7 +33,8 @@ type Order struct {
 	Remark      string         `gorm:"type:varchar(255)" json:"remark"`
 	PaidAt      *time.Time     `json:"paid_at"`
 	CancelledAt *time.Time     `json:"cancelled_at"`
-	CreatedAt   time.Time      `json:"created_at"`
+	CompletedAt *time.Time     `json:"completed_at"`
+	CreatedAt   time.Time      `gorm:"index:idx_orders_status_created_at,priority:2" json:"created_at"`
 	UpdatedAt   time.Time      `json:"updated_at"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }

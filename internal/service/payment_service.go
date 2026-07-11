@@ -23,18 +23,225 @@ type PaymentService interface {
 	AlipayNotify(ctx context.Context, values url.Values) error
 	MockComplete(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
 	MockPayOrder(ctx context.Context, userID int64, orderID int64) (*dto.PaymentResponse, error)
+	Sync(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error)
+	PrepareUserOrderForCancel(ctx context.Context, userID int64, orderID int64) error
+	PrepareOrderForTimeoutCancel(ctx context.Context, orderID int64) (bool, error)
 }
 
 type paymentService struct {
 	paymentRepo repository.PaymentRepository
 	paymentCfg  config.PaymentConfig
+	alipay      alipayGateway
 }
 
 func NewPaymentService(paymentRepo repository.PaymentRepository, paymentCfg config.PaymentConfig) PaymentService {
 	return &paymentService{
 		paymentRepo: paymentRepo,
 		paymentCfg:  paymentCfg,
+		alipay:      newSDKAlipayGateway(paymentCfg.Alipay),
 	}
+}
+
+func (s *paymentService) Sync(ctx context.Context, userID int64, paymentNo string) (*dto.PaymentResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	paymentNo = strings.TrimSpace(paymentNo)
+	if paymentNo == "" {
+		return nil, fmt.Errorf("支付单号不能为空")
+	}
+
+	payment, err := s.paymentRepo.FindByPaymentNoAndUserID(ctx, paymentNo, userID)
+	if err != nil {
+		return nil, fmt.Errorf("支付单不存在")
+	}
+	if payment.PayChannel != model.PayChannelAlipay {
+		return nil, fmt.Errorf("只有支付宝支付单支持主动查询")
+	}
+	if payment.Status != model.PaymentStatusPending {
+		return toPaymentResponse(*payment), nil
+	}
+
+	if _, err := s.syncAlipayPayment(ctx, payment); err != nil {
+		return nil, err
+	}
+	latest, err := s.paymentRepo.FindByPaymentNoAndUserID(ctx, paymentNo, userID)
+	if err != nil {
+		return nil, err
+	}
+	return s.toPaymentResponse(ctx, *latest)
+}
+
+func (s *paymentService) syncAlipayPayment(ctx context.Context, payment *model.Payment) (alipayTradeState, error) {
+	trade, err := s.alipay.Query(ctx, *payment)
+	if err != nil {
+		return alipayTradeStateUnknown, err
+	}
+
+	switch trade.State {
+	case alipayTradeStateNotExist, alipayTradeStateWaiting:
+		return trade.State, nil
+	case alipayTradeStateClosed:
+		now := time.Now()
+		if err := s.paymentRepo.MarkClosed(ctx, payment.ID, payment.UserID, now); err != nil {
+			latest, findErr := s.paymentRepo.FindByPaymentNo(ctx, payment.PaymentNo)
+			if findErr == nil && latest.Status == model.PaymentStatusClosed {
+				return trade.State, nil
+			}
+			return alipayTradeStateUnknown, err
+		}
+		return trade.State, nil
+	case alipayTradeStatePaid:
+		err := s.paymentRepo.Transaction(ctx, func(repo repository.PaymentRepository) error {
+			latest, err := repo.FindByPaymentNo(ctx, payment.PaymentNo)
+			if err != nil {
+				return fmt.Errorf("支付单不存在")
+			}
+			if latest.Status == model.PaymentStatusPaid {
+				return nil
+			}
+			if latest.Status != model.PaymentStatusPending {
+				return fmt.Errorf("当前支付单状态不能完成支付")
+			}
+			order, err := repo.FindOrderByIDAndUserID(ctx, latest.OrderID, latest.UserID)
+			if err != nil {
+				return fmt.Errorf("订单不存在")
+			}
+			if order.Status == model.OrderStatusPaid {
+				return repo.MarkPaid(ctx, latest.ID, latest.UserID, trade.TransactionID, trade.PaidAt)
+			}
+			if order.Status != model.OrderStatusPendingPayment {
+				return fmt.Errorf("订单状态与支付宝支付结果冲突，请人工处理")
+			}
+			if err := repo.MarkPaid(ctx, latest.ID, latest.UserID, trade.TransactionID, trade.PaidAt); err != nil {
+				return err
+			}
+			return repo.UpdateOrderStatus(
+				ctx,
+				order.ID,
+				order.UserID,
+				model.OrderStatusPendingPayment,
+				model.OrderStatusPaid,
+				&trade.PaidAt,
+			)
+		})
+		if err != nil {
+			return alipayTradeStateUnknown, err
+		}
+		return trade.State, nil
+	default:
+		return alipayTradeStateUnknown, fmt.Errorf("未知的支付宝交易状态")
+	}
+}
+
+func (s *paymentService) PrepareOrderForTimeoutCancel(ctx context.Context, orderID int64) (bool, error) {
+	paidPayment, err := s.paymentRepo.FindPaidByOrderID(ctx, orderID)
+	if err == nil {
+		if err := s.repairOrderFromPaidPayment(ctx, paidPayment); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, err
+	}
+
+	payments, err := s.paymentRepo.FindPendingByOrderID(ctx, orderID)
+	if err != nil {
+		return false, err
+	}
+	for i := range payments {
+		payment := &payments[i]
+		if payment.PayChannel != model.PayChannelAlipay {
+			continue
+		}
+		trade, err := s.alipay.Query(ctx, *payment)
+		if err != nil {
+			return false, err
+		}
+		if trade.State == alipayTradeStatePaid {
+			if _, err := s.syncAlipayPayment(ctx, payment); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		if trade.State == alipayTradeStateClosed {
+			continue
+		}
+		if trade.State == alipayTradeStateWaiting || trade.State == alipayTradeStateNotExist {
+			if err := s.alipay.Close(ctx, *payment); err != nil {
+				latestTrade, queryErr := s.alipay.Query(ctx, *payment)
+				if queryErr == nil && latestTrade.State == alipayTradeStatePaid {
+					if _, syncErr := s.syncAlipayPayment(ctx, payment); syncErr != nil {
+						return false, syncErr
+					}
+					return true, nil
+				}
+				if queryErr == nil && latestTrade.State == alipayTradeStateClosed {
+					continue
+				}
+				return false, err
+			}
+			continue
+		}
+		return false, fmt.Errorf("未知的支付宝交易状态")
+	}
+	return false, nil
+}
+
+func (s *paymentService) repairOrderFromPaidPayment(ctx context.Context, payment *model.Payment) error {
+	return s.paymentRepo.Transaction(ctx, func(repo repository.PaymentRepository) error {
+		order, err := repo.FindOrderByIDAndUserID(ctx, payment.OrderID, payment.UserID)
+		if err != nil {
+			return fmt.Errorf("订单不存在")
+		}
+		if order.Status == model.OrderStatusPaid {
+			return nil
+		}
+		if order.Status != model.OrderStatusPendingPayment {
+			return fmt.Errorf("订单状态与已支付支付单冲突，请人工处理")
+		}
+		paidAt := payment.PaidAt
+		if paidAt == nil {
+			now := time.Now()
+			paidAt = &now
+		}
+		return repo.UpdateOrderStatus(
+			ctx,
+			order.ID,
+			order.UserID,
+			model.OrderStatusPendingPayment,
+			model.OrderStatusPaid,
+			paidAt,
+		)
+	})
+}
+
+func (s *paymentService) PrepareUserOrderForCancel(ctx context.Context, userID int64, orderID int64) error {
+	if userID <= 0 {
+		return fmt.Errorf("用户未登录")
+	}
+	if orderID <= 0 {
+		return fmt.Errorf("订单 ID 不合法")
+	}
+	order, err := s.paymentRepo.FindOrderByIDAndUserID(ctx, orderID, userID)
+	if err != nil {
+		return fmt.Errorf("订单不存在")
+	}
+	if order.Status == model.OrderStatusCancelled {
+		return nil
+	}
+	if order.Status != model.OrderStatusPendingPayment {
+		return fmt.Errorf("当前订单状态不能取消")
+	}
+	paid, err := s.PrepareOrderForTimeoutCancel(ctx, orderID)
+	if err != nil {
+		return err
+	}
+	if paid {
+		return fmt.Errorf("订单已支付，不能取消")
+	}
+	return nil
 }
 
 func generatePaymentNo() string {

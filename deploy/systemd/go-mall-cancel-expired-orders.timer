@@ -1,0 +1,11 @@
+[Unit]
+Description=Run go-mall expired order job every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+RandomizedDelaySec=10
+Unit=go-mall-cancel-expired-orders.service
+
+[Install]
+WantedBy=timers.target

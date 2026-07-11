@@ -15,9 +15,12 @@ import (
 )
 
 type fakeOrderRepository struct {
-	order       *model.Order
-	items       []model.OrderItem
-	createCalls int
+	order         *model.Order
+	items         []model.OrderItem
+	shipment      *model.Shipment
+	inventoryLogs []model.InventoryLog
+	createCalls   int
+	completeErr   error
 }
 
 func (r *fakeOrderRepository) Transaction(_ context.Context, fn func(repository.OrderRepository) error) error {
@@ -62,15 +65,41 @@ func (r *fakeOrderRepository) FindItemsByOrderID(_ context.Context, _ int64) ([]
 	return append([]model.OrderItem(nil), r.items...), nil
 }
 
+func (r *fakeOrderRepository) FindShipmentByOrderID(_ context.Context, orderID int64) (*model.Shipment, error) {
+	if r.shipment == nil || r.shipment.OrderID != orderID {
+		return nil, context.Canceled
+	}
+	copy := *r.shipment
+	return &copy, nil
+}
+
+func (r *fakeOrderRepository) Complete(_ context.Context, id int64, userID int64, completedAt time.Time) error {
+	if r.order == nil || r.order.ID != id || r.order.UserID != userID || r.order.Status != model.OrderStatusShipped {
+		return context.Canceled
+	}
+	r.order.Status = model.OrderStatusCompleted
+	r.order.CompletedAt = &completedAt
+	return r.completeErr
+}
+
 func (r *fakeOrderRepository) ListByUserID(_ context.Context, _ int64, _ int, _ int, _ int) ([]model.Order, int64, error) {
 	return nil, 0, nil
 }
 
-func (r *fakeOrderRepository) DecreaseSKUStock(_ context.Context, _ int64, _ int64, _ int) error {
+func (r *fakeOrderRepository) DecreaseSKUStock(_ context.Context, _ int64, _ int64, quantity int) (int, error) {
+	return 10 - quantity, nil
+}
+
+func (r *fakeOrderRepository) IncreaseSKUStock(_ context.Context, _ int64, _ int64, quantity int) (int, error) {
+	return 10 + quantity, nil
+}
+
+func (r *fakeOrderRepository) CreateInventoryLogs(_ context.Context, logs []model.InventoryLog) error {
+	r.inventoryLogs = append(r.inventoryLogs, logs...)
 	return nil
 }
 
-func (r *fakeOrderRepository) IncreaseSKUStock(_ context.Context, _ int64, _ int) error {
+func (r *fakeOrderRepository) ClosePendingPayments(_ context.Context, _ int64, _ time.Time) error {
 	return nil
 }
 
@@ -206,6 +235,9 @@ func TestOrderCreateAcceptsMissingPreviewTokenAndIsIdempotent(t *testing.T) {
 	if orderRepo.createCalls != 1 {
 		t.Fatalf("expected one order insert, got %d", orderRepo.createCalls)
 	}
+	if len(orderRepo.inventoryLogs) != 1 || orderRepo.inventoryLogs[0].Quantity != -3 || orderRepo.inventoryLogs[0].ReferenceID != 42 {
+		t.Fatalf("unexpected inventory logs: %+v", orderRepo.inventoryLogs)
+	}
 	if value, err := redisServer.Get(orderIdempotencyKey(7, req.IdempotencyToken)); err != nil || value != "order:42" {
 		t.Fatalf("unexpected idempotency value %q, err=%v", value, err)
 	}
@@ -254,5 +286,72 @@ func TestOrderCreateRejectsConcurrentSubmission(t *testing.T) {
 	}
 	if orderRepo.createCalls != 0 {
 		t.Fatalf("concurrent request inserted an order, create calls=%d", orderRepo.createCalls)
+	}
+}
+
+func TestOrderLogisticsChecksOwnershipAndReturnsShipment(t *testing.T) {
+	service, orderRepo, _ := newOrderServiceForTest(t)
+	shippedAt := time.Date(2026, 7, 10, 12, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+	orderRepo.order = &model.Order{ID: 42, UserID: 7, Status: model.OrderStatusShipped}
+	orderRepo.shipment = &model.Shipment{
+		OrderID:          42,
+		LogisticsCompany: "顺丰速运",
+		TrackingNo:       "SF123",
+		ShippedAt:        shippedAt,
+	}
+
+	result, err := service.Logistics(context.Background(), 7, 42)
+	if err != nil {
+		t.Fatalf("logistics returned error: %v", err)
+	}
+	if result.TrackingNo != "SF123" || len(result.Traces) != 1 || result.Traces[0].Content != "商家已发货" {
+		t.Fatalf("unexpected logistics response: %+v", result)
+	}
+
+	if _, err := service.Logistics(context.Background(), 8, 42); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("expected ownership rejection, got %v", err)
+	}
+}
+
+func TestOrderConfirmCompletesShippedOrderAndIsIdempotent(t *testing.T) {
+	service, orderRepo, _ := newOrderServiceForTest(t)
+	orderRepo.order = &model.Order{
+		ID:        42,
+		UserID:    7,
+		Status:    model.OrderStatusShipped,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	result, err := service.Confirm(context.Background(), 7, 42)
+	if err != nil {
+		t.Fatalf("confirm returned error: %v", err)
+	}
+	if result.Status != model.OrderStatusCompleted || result.CompletedAt == nil {
+		t.Fatalf("unexpected completed order: %+v", result)
+	}
+
+	if _, err := service.Confirm(context.Background(), 7, 42); err != nil {
+		t.Fatalf("idempotent confirm returned error: %v", err)
+	}
+}
+
+func TestOrderConfirmTreatsConcurrentCompletionAsSuccess(t *testing.T) {
+	service, orderRepo, _ := newOrderServiceForTest(t)
+	orderRepo.order = &model.Order{
+		ID:        42,
+		UserID:    7,
+		Status:    model.OrderStatusShipped,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	orderRepo.completeErr = context.Canceled
+
+	result, err := service.Confirm(context.Background(), 7, 42)
+	if err != nil {
+		t.Fatalf("concurrent confirm returned error: %v", err)
+	}
+	if result.Status != model.OrderStatusCompleted {
+		t.Fatalf("unexpected concurrent completion result: %+v", result)
 	}
 }

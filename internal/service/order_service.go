@@ -21,6 +21,8 @@ type OrderService interface {
 	List(ctx context.Context, userID int64, req dto.OrderListRequest) (*dto.PageResponse[dto.OrderResponse], error)
 	Detail(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
 	Cancel(ctx context.Context, userID int64, id int64) error
+	Logistics(ctx context.Context, userID int64, id int64) (*dto.LogisticsResponse, error)
+	Confirm(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error)
 }
 
 type orderService struct {
@@ -118,6 +120,12 @@ func toOrderResponse(order model.Order, items []model.OrderItem) *dto.OrderRespo
 		cancelledAt = &value
 	}
 
+	var completedAt *string
+	if order.CompletedAt != nil {
+		value := order.CompletedAt.Format(time.RFC3339)
+		completedAt = &value
+	}
+
 	return &dto.OrderResponse{
 		ID:              order.ID,
 		OrderNo:         order.OrderNo,
@@ -136,8 +144,72 @@ func toOrderResponse(order model.Order, items []model.OrderItem) *dto.OrderRespo
 		Remark:          order.Remark,
 		PaidAt:          paidAt,
 		CancelledAt:     cancelledAt,
+		CompletedAt:     completedAt,
 		Items:           itemResponses,
+		CreatedAt:       order.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:       order.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+func (s *orderService) Logistics(ctx context.Context, userID int64, id int64) (*dto.LogisticsResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	if id <= 0 {
+		return nil, fmt.Errorf("订单 ID 不合法")
+	}
+
+	order, err := s.orderRepo.FindByIDAndUserID(ctx, id, userID)
+	if err != nil {
+		return nil, fmt.Errorf("订单不存在")
+	}
+	if order.Status != model.OrderStatusShipped && order.Status != model.OrderStatusCompleted {
+		return nil, fmt.Errorf("订单尚未发货")
+	}
+
+	shipment, err := s.orderRepo.FindShipmentByOrderID(ctx, order.ID)
+	if err != nil {
+		return nil, fmt.Errorf("物流信息不存在")
+	}
+
+	return &dto.LogisticsResponse{
+		OrderID:          order.ID,
+		LogisticsCompany: shipment.LogisticsCompany,
+		TrackingNo:       shipment.TrackingNo,
+		Traces: []dto.LogisticsTraceResponse{{
+			Time:    shipment.ShippedAt.Format(time.RFC3339),
+			Content: "商家已发货",
+		}},
+	}, nil
+}
+
+func (s *orderService) Confirm(ctx context.Context, userID int64, id int64) (*dto.OrderResponse, error) {
+	if userID <= 0 {
+		return nil, fmt.Errorf("用户未登录")
+	}
+	if id <= 0 {
+		return nil, fmt.Errorf("订单 ID 不合法")
+	}
+
+	order, err := s.orderRepo.FindByIDAndUserID(ctx, id, userID)
+	if err != nil {
+		return nil, fmt.Errorf("订单不存在")
+	}
+	if order.Status == model.OrderStatusCompleted {
+		return s.Detail(ctx, userID, id)
+	}
+	if order.Status != model.OrderStatusShipped {
+		return nil, fmt.Errorf("当前订单状态不能确认收货")
+	}
+
+	if err := s.orderRepo.Complete(ctx, id, userID, time.Now()); err != nil {
+		latest, findErr := s.orderRepo.FindByIDAndUserID(ctx, id, userID)
+		if findErr == nil && latest.Status == model.OrderStatusCompleted {
+			return s.Detail(ctx, userID, id)
+		}
+		return nil, err
+	}
+	return s.Detail(ctx, userID, id)
 }
 
 func normalizeOrderPage(page int, pageSize int) (int, int) {
@@ -383,6 +455,7 @@ func (s *orderService) Create(
 
 	var createdOrder *model.Order
 	var createdItems []model.OrderItem
+	var inventoryLogs []model.InventoryLog
 
 	err = s.orderRepo.Transaction(ctx, func(repo repository.OrderRepository) error {
 		address, err := s.addressRepo.FindByIDAndUserID(ctx, req.AddressID, userID)
@@ -452,9 +525,25 @@ func (s *orderService) Create(
 				return fmt.Errorf("商品已下架")
 			}
 
-			if err := repo.DecreaseSKUStock(ctx, defaultMerchantID, sku.ID, quantity); err != nil {
+			afterStock, err := repo.DecreaseSKUStock(ctx, defaultMerchantID, sku.ID, quantity)
+			if err != nil {
 				return err
 			}
+			inventoryLogs = append(inventoryLogs, model.InventoryLog{
+				MerchantID:    defaultMerchantID,
+				ProductID:     product.ID,
+				SKUID:         sku.ID,
+				ProductName:   product.Name,
+				SKUName:       sku.Name,
+				ChangeType:    model.InventoryChangeOrderCreate,
+				Quantity:      -quantity,
+				BeforeStock:   afterStock + quantity,
+				AfterStock:    afterStock,
+				ReferenceType: model.InventoryReferenceOrder,
+				OperatorType:  model.InventoryOperatorUser,
+				OperatorID:    userID,
+				Remark:        "创建订单扣减库存",
+			})
 
 			subtotal := sku.Price * int64(quantity)
 			goodsAmount += subtotal
@@ -485,6 +574,12 @@ func (s *orderService) Create(
 		}
 
 		if err := repo.CreateItems(ctx, items); err != nil {
+			return err
+		}
+		for i := range inventoryLogs {
+			inventoryLogs[i].ReferenceID = order.ID
+		}
+		if err := repo.CreateInventoryLogs(ctx, inventoryLogs); err != nil {
 			return err
 		}
 
@@ -592,6 +687,9 @@ func (s *orderService) Cancel(ctx context.Context, userID int64, id int64) error
 		}
 
 		now := time.Now()
+		if err := repo.ClosePendingPayments(ctx, order.ID, now); err != nil {
+			return err
+		}
 		if err := repo.UpdateStatus(
 			ctx,
 			order.ID,
@@ -604,12 +702,29 @@ func (s *orderService) Cancel(ctx context.Context, userID int64, id int64) error
 			return err
 		}
 
+		inventoryLogs := make([]model.InventoryLog, 0, len(items))
 		for _, item := range items {
-			if err := repo.IncreaseSKUStock(ctx, item.SKUID, item.Quantity); err != nil {
+			afterStock, err := repo.IncreaseSKUStock(ctx, order.MerchantID, item.SKUID, item.Quantity)
+			if err != nil {
 				return err
 			}
+			inventoryLogs = append(inventoryLogs, model.InventoryLog{
+				MerchantID:    order.MerchantID,
+				ProductID:     item.ProductID,
+				SKUID:         item.SKUID,
+				ProductName:   item.ProductName,
+				SKUName:       item.SKUName,
+				ChangeType:    model.InventoryChangeOrderCancel,
+				Quantity:      item.Quantity,
+				BeforeStock:   afterStock - item.Quantity,
+				AfterStock:    afterStock,
+				ReferenceType: model.InventoryReferenceOrder,
+				ReferenceID:   order.ID,
+				OperatorType:  model.InventoryOperatorUser,
+				OperatorID:    userID,
+				Remark:        "用户取消订单恢复库存",
+			})
 		}
-
-		return nil
+		return repo.CreateInventoryLogs(ctx, inventoryLogs)
 	})
 }

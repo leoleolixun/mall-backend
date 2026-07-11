@@ -44,7 +44,7 @@ tags:
   - name: Upload
     description: 文件上传
   - name: MerchantAdmin
-    description: 商家后台，二期规划接口
+    description: 商家后台接口；认证、上传、订单、分类、商品、SKU 和库存流水管理已实现
   - name: PlatformAdmin
     description: 平台后台，二期规划接口
 
@@ -1026,7 +1026,7 @@ paths:
       tags:
         - Order
       summary: 取消订单
-      description: 第一版仅允许取消待支付订单，取消成功后恢复 SKU 库存。
+      description: 仅允许取消待支付订单。存在支付宝支付单时会先查询并关闭支付宝交易，再在事务中关闭本地支付单、恢复 SKU 库存并取消订单。
       operationId: cancelOrder
       security:
         - bearerAuth: []
@@ -1079,7 +1079,7 @@ paths:
       tags:
         - Order
       summary: 确认收货
-      description: 规划接口，后端尚未实现。
+      description: 后续规划接口。当前 MVP 的订单流程停在已发货，后端未注册此路由。
       operationId: confirmOrder
       security:
         - bearerAuth: []
@@ -1107,7 +1107,7 @@ paths:
       tags:
         - Logistics
       summary: 查询订单物流
-      description: 规划接口，后端尚未实现。
+      description: 后续规划接口。当前 MVP 不提供买家物流轨迹查询，后端未注册此路由。
       operationId: getOrderLogistics
       security:
         - bearerAuth: []
@@ -1230,6 +1230,34 @@ paths:
       responses:
         "200":
           description: 支付完成
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Payment"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/payments/{payment_no}/sync:
+    post:
+      tags:
+        - Payment
+      summary: 主动同步支付宝支付状态
+      description: 已实现。调用支付宝 alipay.trade.query，根据真实交易状态同步本地支付单和订单；仅支持当前用户自己的支付宝支付单。
+      operationId: syncAlipayPayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/PaymentNo"
+      responses:
+        "200":
+          description: 同步成功
           content:
             application/json:
               schema:
@@ -1394,9 +1422,12 @@ paths:
     post:
       tags:
         - Upload
-      summary: 上传文件
-      description: 规划接口，后端尚未实现。商品图片、头像、售后凭证都可以复用。
-      operationId: uploadFile
+      summary: 上传图片
+      description: |
+        已实现。服务端根据配置上传到腾讯云 COS 或七牛 Kodo。
+        默认最大 10 MB，仅支持 JPEG、PNG、WebP 和 GIF；具体上限由后端配置决定。
+        返回的 URL 可用于头像、商品图片和售后凭证等业务字段。
+      operationId: uploadImage
       security:
         - bearerAuth: []
       requestBody:
@@ -1413,10 +1444,9 @@ paths:
                   format: binary
                 scene:
                   type: string
-                  enum:
-                    - avatar
-                    - product
-                    - after_sale
+                  pattern: "^[a-z0-9_-]{1,32}$"
+                  default: general
+                  description: 业务场景，用于组织对象目录，如 avatar、product、after_sale。
                   example: product
       responses:
         "200":
@@ -1429,18 +1459,20 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/UploadFile"
+                        $ref: "#/components/schemas/UploadImage"
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/merchant/auth/login:
     post:
       tags:
         - MerchantAdmin
       summary: 商家后台登录
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。商家账号与买家账号相互独立，返回 Merchant JWT 和 Refresh Token。
       operationId: merchantLogin
       requestBody:
         required: true
@@ -1463,15 +1495,64 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
 
+  /api/v1/merchant/auth/refresh:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 刷新商家访问令牌
+      operationId: refreshMerchantToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantRefreshRequest"
+      responses:
+        "200":
+          description: 刷新成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantAuthResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/auth/logout:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台退出登录
+      operationId: logoutMerchant
+      security:
+        - merchantBearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantRefreshRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/merchant/me:
     get:
       tags:
         - MerchantAdmin
       summary: 当前商家后台用户
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。返回当前商家账号及其所属商户。
       operationId: getMerchantCurrentUser
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       responses:
         "200":
           description: 查询成功
@@ -1487,15 +1568,61 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/merchant/uploads:
+    post:
+      tags:
+        - MerchantAdmin
+        - Upload
+      summary: 商家后台上传图片
+      description: 与用户端图片上传共用实现，可用于商户 Logo、商品封面和 SKU 图片。
+      operationId: uploadMerchantImage
+      security:
+        - merchantBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                scene:
+                  type: string
+                  pattern: "^[a-z0-9_-]{1,32}$"
+                  default: product
+                  example: product
+      responses:
+        "200":
+          description: 上传成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UploadImage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
   /api/v1/merchant/categories:
     get:
       tags:
         - MerchantAdmin
       summary: 商家后台分类列表
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。查询 Merchant JWT 所属商户的全部分类。
       operationId: listMerchantCategories
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       responses:
         "200":
           description: 查询成功
@@ -1516,10 +1643,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台创建分类
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。父分类必须属于当前商户；未传 status 时默认启用。
       operationId: createMerchantCategory
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       requestBody:
         required: true
         content:
@@ -1548,10 +1675,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台更新分类
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。禁止把当前分类或其子分类设置为父分类；存在上架商品时不能禁用分类。
       operationId: updateMerchantCategory
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/CategoryID"
       requestBody:
@@ -1580,10 +1707,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台删除分类
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。存在子分类或关联商品时不能删除，删除使用软删除。
       operationId: deleteMerchantCategory
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/CategoryID"
       responses:
@@ -1599,10 +1726,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台商品列表
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。支持分页、状态和名称关键字筛选，并批量组装 SKU，避免逐商品查询。
       operationId: listMerchantProducts
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - name: page
           in: query
@@ -1647,10 +1774,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台创建商品
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。商品默认创建为草稿；请先创建 SKU，再通过上架接口发布。
       operationId: createMerchantProduct
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       requestBody:
         required: true
         content:
@@ -1679,10 +1806,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台商品详情
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。只能查询 Merchant JWT 所属商户的商品及 SKU。
       operationId: getMerchantProduct
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
       responses:
@@ -1705,10 +1832,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台更新商品
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。分类必须属于当前商户且处于启用状态。
       operationId: updateMerchantProduct
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
       requestBody:
@@ -1733,16 +1860,33 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+    delete:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台删除商品
+      description: 已实现。只能删除草稿或已下架商品；商品及其 SKU 使用软删除，历史订单快照不受影响。
+      operationId: deleteMerchantProduct
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ProductID"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
 
   /api/v1/merchant/products/{id}/on-sale:
     post:
       tags:
         - MerchantAdmin
       summary: 商家后台商品上架
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。分类必须启用，且商品至少存在一个价格大于 0 的启用 SKU。
       operationId: onSaleMerchantProduct
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
       responses:
@@ -1758,10 +1902,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台商品下架
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。商品先下架退出销售；不再需要时可调用删除接口进行软删除。
       operationId: offSaleMerchantProduct
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
       responses:
@@ -1777,10 +1921,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台创建商品 SKU
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。SKU 必须属于当前商户的商品；未传 status 时默认启用。
       operationId: createMerchantProductSKU
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
       requestBody:
@@ -1811,10 +1955,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台更新商品 SKU
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。上架商品不能禁用最后一个可售 SKU。
       operationId: updateMerchantProductSKU
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
         - $ref: "#/components/parameters/SKUID"
@@ -1844,10 +1988,10 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台删除商品 SKU
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。删除使用软删除；上架商品不能删除最后一个可售 SKU。
       operationId: deleteMerchantProductSKU
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/ProductID"
         - $ref: "#/components/parameters/SKUID"
@@ -1859,6 +2003,156 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/merchant/inventory-logs:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台库存变更记录
+      description: 已实现。仅查询 Merchant JWT 所属商户的库存流水，支持按商品、SKU 和变更类型筛选。
+      operationId: listMerchantInventoryLogs
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: product_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: sku_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: change_type
+          in: query
+          schema:
+            $ref: "#/components/schemas/InventoryChangeType"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantInventoryLogPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/inventory-alerts:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台低库存预警列表
+      description: 已实现。仅返回当前商户已启用、预警阈值大于 0 且库存小于等于阈值的 SKU；阈值为 0 表示关闭预警。
+      operationId: listMerchantInventoryAlerts
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: product_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: sku_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: keyword
+          in: query
+          description: 商品名称或 SKU 名称关键词
+          schema:
+            type: string
+            maxLength: 100
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantInventoryAlertPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/inventory/skus/{sku_id}/stock:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台调整 SKU 库存
+      description: 已实现。仅允许修改库存和低库存阈值；warehouse、operator、admin、owner 可调用。库存变化与库存流水写入同一事务。
+      operationId: adjustMerchantSKUStock
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/SKUID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantStockAdjustmentRequest"
+      responses:
+        "200":
+          description: 调整成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantStock"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /api/v1/merchant/coupons:
     get:
       tags:
@@ -1867,7 +2161,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: listMerchantCoupons
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       responses:
         "200":
           description: 查询成功
@@ -1891,7 +2185,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: createMerchantCoupon
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       requestBody:
         required: true
         content:
@@ -1923,7 +2217,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: updateMerchantCoupon
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/CouponID"
       requestBody:
@@ -1957,7 +2251,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: listMerchantAfterSales
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - name: status
           in: query
@@ -1987,7 +2281,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: approveMerchantAfterSale
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AfterSaleID"
       responses:
@@ -2015,7 +2309,7 @@ paths:
       description: 二期规划接口，后端尚未实现。
       operationId: rejectMerchantAfterSale
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/AfterSaleID"
       requestBody:
@@ -2041,15 +2335,84 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/merchant/dashboard/overview:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台经营概览
+      description: 已实现。金额单位为分；今日统计按服务端本地时区的自然日计算；低库存数量包含缺货 SKU。
+      operationId: getMerchantDashboardOverview
+      security:
+        - merchantBearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantDashboardOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/dashboard/analytics:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家后台销售趋势与热销商品
+      description: 已实现。统计当前商户已成交订单；金额单位为分；无成交日期也会返回零值数据点。
+      operationId: getMerchantDashboardAnalytics
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          description: 包含今天在内的统计天数
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 30
+            default: 7
+        - name: top_limit
+          in: query
+          description: 热销商品返回数量
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+            default: 10
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantDashboardAnalytics"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
   /api/v1/merchant/orders:
     get:
       tags:
         - MerchantAdmin
       summary: 商家后台订单列表
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。只能查询 Merchant JWT 所属商户的订单，订单明细与物流记录使用批量查询组装。
       operationId: listMerchantOrders
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - name: page
           in: query
@@ -2085,16 +2448,18 @@ paths:
                         $ref: "#/components/schemas/OrderPage"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/merchant/orders/{id}:
     get:
       tags:
         - MerchantAdmin
       summary: 商家后台订单详情
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。订单 ID 与当前 merchant_id 不匹配时按订单不存在处理。
       operationId: getMerchantOrder
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/OrderID"
       responses:
@@ -2113,16 +2478,18 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/merchant/orders/{id}/ship:
     post:
       tags:
         - MerchantAdmin
       summary: 商家后台订单发货
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。支持普通快递和商家自配送；仅已支付订单可发货，相同发货信息重复提交按幂等成功处理。
       operationId: shipMerchantOrder
       security:
-        - bearerAuth: []
+        - merchantBearerAuth: []
       parameters:
         - $ref: "#/components/parameters/OrderID"
       requestBody:
@@ -2147,6 +2514,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 
   /api/v1/admin/auth/login:
     post:
@@ -2514,6 +2883,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    merchantBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: Merchant JWT
 
   parameters:
     ProductID:
@@ -2630,6 +3003,15 @@ components:
           example:
             code: 401
             message: 未登录
+    Forbidden:
+      description: 当前商家角色没有接口权限
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 40300
+            message: 当前角色无权执行此操作
     InternalError:
       description: 服务内部错误
       content:
@@ -2968,12 +3350,17 @@ components:
           type: integer
           format: int64
           description: 价格，单位分
-          minimum: 0
+          minimum: 1
           example: 599900
         stock:
           type: integer
           minimum: 0
           example: 100
+        low_stock_threshold:
+          type: integer
+          minimum: 0
+          description: 低库存预警阈值；0 表示关闭预警。更新 SKU 时省略该字段会保留原值。
+          example: 10
         status:
           type: integer
           description: 0 禁用，1 启用
@@ -2989,6 +3376,7 @@ components:
             - id
             - merchant_id
             - product_id
+            - low_stock_threshold
           properties:
             id:
               type: integer
@@ -3003,6 +3391,366 @@ components:
               format: int64
               example: 1
         - $ref: "#/components/schemas/MerchantSKURequest"
+
+    InventoryChangeType:
+      type: string
+      enum:
+        - order_create
+        - order_cancel
+        - order_timeout
+        - merchant_init
+        - merchant_adjustment
+      example: merchant_adjustment
+
+    MerchantInventoryLog:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - product_id
+        - sku_id
+        - product_name
+        - sku_name
+        - change_type
+        - quantity
+        - before_stock
+        - after_stock
+        - reference_type
+        - reference_id
+        - operator_type
+        - operator_id
+        - remark
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        merchant_id:
+          type: integer
+          format: int64
+        product_id:
+          type: integer
+          format: int64
+        sku_id:
+          type: integer
+          format: int64
+        product_name:
+          type: string
+        sku_name:
+          type: string
+        change_type:
+          $ref: "#/components/schemas/InventoryChangeType"
+        quantity:
+          type: integer
+          description: 有符号变更量，扣减为负数，恢复或增加为正数
+          example: -2
+        before_stock:
+          type: integer
+          example: 10
+        after_stock:
+          type: integer
+          example: 8
+        reference_type:
+          type: string
+          enum:
+            - order
+            - sku
+        reference_id:
+          type: integer
+          format: int64
+        operator_type:
+          type: string
+          enum:
+            - system
+            - user
+            - merchant
+        operator_id:
+          type: integer
+          format: int64
+        remark:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    MerchantInventoryLogPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantInventoryLog"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    MerchantStockAdjustmentRequest:
+      type: object
+      required:
+        - stock
+      properties:
+        stock:
+          type: integer
+          minimum: 0
+          example: 20
+        low_stock_threshold:
+          type: integer
+          minimum: 0
+          description: 省略时保留原阈值，0 表示关闭预警
+          example: 5
+        remark:
+          type: string
+          maxLength: 255
+          example: 仓库盘点调整
+
+    MerchantStock:
+      type: object
+      required:
+        - merchant_id
+        - product_id
+        - sku_id
+        - stock
+        - low_stock_threshold
+      properties:
+        merchant_id:
+          type: integer
+          format: int64
+        product_id:
+          type: integer
+          format: int64
+        sku_id:
+          type: integer
+          format: int64
+        stock:
+          type: integer
+          minimum: 0
+        low_stock_threshold:
+          type: integer
+          minimum: 0
+
+    MerchantInventoryAlert:
+      type: object
+      required:
+        - merchant_id
+        - product_id
+        - sku_id
+        - product_name
+        - sku_name
+        - image
+        - stock
+        - low_stock_threshold
+        - severity
+        - updated_at
+      properties:
+        merchant_id:
+          type: integer
+          format: int64
+        product_id:
+          type: integer
+          format: int64
+        sku_id:
+          type: integer
+          format: int64
+        product_name:
+          type: string
+        sku_name:
+          type: string
+        image:
+          type: string
+        stock:
+          type: integer
+          minimum: 0
+        low_stock_threshold:
+          type: integer
+          minimum: 1
+        severity:
+          type: string
+          enum:
+            - low_stock
+            - out_of_stock
+        updated_at:
+          type: string
+          format: date-time
+
+    MerchantInventoryAlertPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantInventoryAlert"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 1
+
+    MerchantDashboardOverview:
+      type: object
+      required:
+        - total_products
+        - on_sale_products
+        - low_stock_skus
+        - out_of_stock_skus
+        - pending_payment_orders
+        - pending_shipment_orders
+        - today_paid_orders
+        - today_paid_amount
+        - total_paid_orders
+        - total_paid_amount
+        - generated_at
+      properties:
+        total_products:
+          type: integer
+          format: int64
+          example: 20
+        on_sale_products:
+          type: integer
+          format: int64
+          example: 15
+        low_stock_skus:
+          type: integer
+          format: int64
+          description: 包含缺货 SKU
+          example: 3
+        out_of_stock_skus:
+          type: integer
+          format: int64
+          example: 1
+        pending_payment_orders:
+          type: integer
+          format: int64
+          example: 4
+        pending_shipment_orders:
+          type: integer
+          format: int64
+          description: 当前状态为已支付、等待商家发货的订单数
+          example: 2
+        today_paid_orders:
+          type: integer
+          format: int64
+          example: 6
+        today_paid_amount:
+          type: integer
+          format: int64
+          description: 今日成交金额，单位分
+          example: 199900
+        total_paid_orders:
+          type: integer
+          format: int64
+          example: 120
+        total_paid_amount:
+          type: integer
+          format: int64
+          description: 累计成交金额，单位分
+          example: 3999000
+        generated_at:
+          type: string
+          format: date-time
+          example: "2026-07-11T15:30:00+08:00"
+
+    MerchantDailySales:
+      type: object
+      required:
+        - date
+        - paid_orders
+        - paid_amount
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2026-07-11"
+        paid_orders:
+          type: integer
+          format: int64
+          example: 6
+        paid_amount:
+          type: integer
+          format: int64
+          description: 成交金额，单位分
+          example: 199900
+
+    MerchantTopProduct:
+      type: object
+      required:
+        - product_id
+        - product_name
+        - paid_orders
+        - quantity
+        - sales_amount
+      properties:
+        product_id:
+          type: integer
+          format: int64
+        product_name:
+          type: string
+          description: 下单时保存的商品名称快照
+          example: iPhone 15
+        paid_orders:
+          type: integer
+          format: int64
+          example: 5
+        quantity:
+          type: integer
+          format: int64
+          example: 8
+        sales_amount:
+          type: integer
+          format: int64
+          description: 商品成交金额，单位分
+          example: 399900
+
+    MerchantDashboardAnalytics:
+      type: object
+      required:
+        - start_date
+        - end_date
+        - sales_trend
+        - top_products
+        - generated_at
+      properties:
+        start_date:
+          type: string
+          format: date
+          example: "2026-07-05"
+        end_date:
+          type: string
+          format: date
+          example: "2026-07-11"
+        sales_trend:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantDailySales"
+        top_products:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantTopProduct"
+        generated_at:
+          type: string
+          format: date-time
+          example: "2026-07-11T15:30:00+08:00"
 
     RegisterRequest:
       type: object
@@ -3434,6 +4182,16 @@ components:
           format: password
           example: "123456"
 
+    MerchantRefreshRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          format: uuid
+          example: 7a2c1f80-0000-0000-0000-000000000000
+
     MerchantAuthResult:
       type: object
       required:
@@ -3459,6 +4217,7 @@ components:
         - username
         - nickname
         - role
+        - permissions
       properties:
         id:
           type: integer
@@ -3479,8 +4238,32 @@ components:
           example: 店铺管理员
         role:
           type: string
-          description: 第一版二期可先使用简单角色，后续再扩展 RBAC
+          description: 商家账号角色
+          enum:
+            - owner
+            - admin
+            - operator
+            - sales
+            - warehouse
           example: owner
+        permissions:
+          type: array
+          description: 前端用于控制菜单和按钮；后端仍会独立校验权限
+          items:
+            type: string
+            enum:
+              - dashboard:read
+              - order:read
+              - order:ship
+              - catalog:read
+              - catalog:write
+              - inventory:read
+              - inventory:write
+              - upload:write
+          example:
+            - dashboard:read
+            - order:read
+            - order:ship
 
     AdminLoginRequest:
       type: object
@@ -3845,16 +4628,58 @@ components:
 
     ShipOrderRequest:
       type: object
+      properties:
+        delivery_type:
+          type: string
+          description: 配送类型；不传时默认普通快递。普通快递必须填写物流公司和运单号，商家自配送不需要。
+          enum:
+            - express
+            - self_delivery
+          default: express
+          example: express
+        logistics_company:
+          type: string
+          maxLength: 100
+          example: 顺丰速运
+        tracking_no:
+          type: string
+          maxLength: 100
+          example: SF1234567890
+
+    Shipment:
+      type: object
       required:
+        - id
+        - order_id
+        - delivery_type
         - logistics_company
         - tracking_no
+        - shipped_at
       properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        order_id:
+          type: integer
+          format: int64
+          example: 1
+        delivery_type:
+          type: string
+          enum:
+            - express
+            - self_delivery
+          example: express
         logistics_company:
           type: string
           example: 顺丰速运
         tracking_no:
           type: string
           example: SF1234567890
+        shipped_at:
+          type: string
+          format: date-time
+          example: "2026-07-10T20:30:00+08:00"
 
     LogisticsInfo:
       type: object
@@ -4051,6 +4876,15 @@ components:
           format: date-time
           nullable: true
           example: null
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+        shipment:
+          allOf:
+            - $ref: "#/components/schemas/Shipment"
+          nullable: true
         items:
           type: array
           items:
@@ -4248,21 +5082,36 @@ components:
           format: int64
           example: 1
 
-    UploadFile:
+    UploadImage:
       type: object
       required:
         - url
+        - key
         - filename
+        - content_type
         - size
+        - provider
       properties:
         url:
           type: string
-          example: https://example.com/uploads/product.jpg
+          example: https://images.example.com/go-mall/product/2026/07/550e8400-e29b-41d4-a716-446655440000.jpg
+        key:
+          type: string
+          example: go-mall/product/2026/07/550e8400-e29b-41d4-a716-446655440000.jpg
         filename:
           type: string
           example: product.jpg
+        content_type:
+          type: string
+          example: image/jpeg
         size:
           type: integer
           format: int64
           description: 文件大小，单位字节
           example: 102400
+        provider:
+          type: string
+          enum:
+            - cos
+            - qiniu
+          example: cos

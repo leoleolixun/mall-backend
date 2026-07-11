@@ -3,6 +3,14 @@ app:
   auto_migrate: false
   seed_data: false
 
+order:
+  # 首次部署保持 false，确认支付宝配置和任务日志正常后再开启。
+  cancel_expired_enabled: false
+  # 待支付订单超过该时间后可由超时取消任务处理。
+  pending_payment_timeout_minutes: 15
+  # 每次任务最多处理的订单数，最大限制为 1000。
+  cancel_batch_size: 100
+
 server:
   port: 8080
   mode: debug
@@ -29,6 +37,33 @@ jwt:
   access_secret: change_me
   access_ttl_minutes: 120
   refresh_ttl_hours: 168
+  # 商家后台使用独立签名密钥，避免买家 token 与商家 token 混用。
+  merchant_access_secret: change_me_to_another_secret
+  merchant_access_ttl_minutes: 120
+  merchant_refresh_ttl_hours: 168
+
+storage:
+  # 留空表示暂不启用；可选 cos（腾讯云 COS）或 qiniu（七牛 Kodo）。
+  provider: ""
+  # 图片上传大小上限，单位 MB。
+  max_image_size_mb: 10
+  # 对象键前缀，最终路径类似 go-mall/avatar/2026/07/uuid.jpg。
+  path_prefix: "go-mall"
+  # 图片对外访问域名。可以填写对象存储默认域名或绑定的 CDN 自定义域名。
+  public_base_url: "https://images.example.com"
+
+  cos:
+    # 腾讯云存储桶 URL，格式为 https://<BucketName-APPID>.cos.<Region>.myqcloud.com
+    bucket_url: "https://example-1250000000.cos.ap-guangzhou.myqcloud.com"
+    # 从腾讯云访问管理获取。真实密钥只放在服务器 config.yaml，不要提交到 Git。
+    secret_id: ""
+    secret_key: ""
+
+  qiniu:
+    # 七牛对象存储空间名称和密钥。
+    bucket: ""
+    access_key: ""
+    secret_key: ""
 
 payment:
   alipay:

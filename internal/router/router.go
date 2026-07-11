@@ -19,6 +19,12 @@ func NewRouter(
 	cartHandler *handler.CartHandler,
 	orderHandler *handler.OrderHandler,
 	paymentHandler *handler.PaymentHandler,
+	uploadHandler *handler.UploadHandler,
+	merchantAuthHandler *handler.MerchantAuthHandler,
+	merchantOrderHandler *handler.MerchantOrderHandler,
+	merchantCatalogHandler *handler.MerchantCatalogHandler,
+	merchantInventoryHandler *handler.MerchantInventoryHandler,
+	merchantDashboardHandler *handler.MerchantDashboardHandler,
 	jwtCfg config.JWTConfig,
 ) *gin.Engine {
 	r := gin.New()
@@ -45,6 +51,42 @@ func NewRouter(
 			auth.POST("/login/password", authHandler.PasswordLogin)
 			auth.POST("/login/wechat", authHandler.WechatMiniProgramLogin)
 			auth.POST("/refresh", authHandler.Refresh)
+		}
+
+		merchantAuth := api.Group("/merchant/auth")
+		{
+			merchantAuth.POST("/login", merchantAuthHandler.Login)
+			merchantAuth.POST("/refresh", merchantAuthHandler.Refresh)
+		}
+
+		merchantProtected := api.Group("/merchant")
+		merchantProtected.Use(middleware.MerchantAuth(jwtCfg))
+		{
+			merchantProtected.GET("/me", merchantAuthHandler.Me)
+			merchantProtected.POST("/auth/logout", merchantAuthHandler.Logout)
+			merchantProtected.POST("/uploads", middleware.RequireMerchantPermission(middleware.MerchantPermissionUpload), uploadHandler.Image)
+			merchantProtected.GET("/orders", middleware.RequireMerchantPermission(middleware.MerchantPermissionOrderRead), merchantOrderHandler.List)
+			merchantProtected.GET("/orders/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionOrderRead), merchantOrderHandler.Detail)
+			merchantProtected.POST("/orders/:id/ship", middleware.RequireMerchantPermission(middleware.MerchantPermissionOrderShip), merchantOrderHandler.Ship)
+			merchantProtected.GET("/categories", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogRead), merchantCatalogHandler.ListCategories)
+			merchantProtected.POST("/categories", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.CreateCategory)
+			merchantProtected.PUT("/categories/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.UpdateCategory)
+			merchantProtected.DELETE("/categories/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.DeleteCategory)
+			merchantProtected.GET("/products", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogRead), merchantCatalogHandler.ListProducts)
+			merchantProtected.POST("/products", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.CreateProduct)
+			merchantProtected.GET("/products/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogRead), merchantCatalogHandler.ProductDetail)
+			merchantProtected.PUT("/products/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.UpdateProduct)
+			merchantProtected.DELETE("/products/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.DeleteProduct)
+			merchantProtected.POST("/products/:id/on-sale", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.OnSaleProduct)
+			merchantProtected.POST("/products/:id/off-sale", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.OffSaleProduct)
+			merchantProtected.POST("/products/:id/skus", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.CreateSKU)
+			merchantProtected.PUT("/products/:id/skus/:sku_id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.UpdateSKU)
+			merchantProtected.DELETE("/products/:id/skus/:sku_id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCatalogWrite), merchantCatalogHandler.DeleteSKU)
+			merchantProtected.GET("/inventory-logs", middleware.RequireMerchantPermission(middleware.MerchantPermissionInventoryRead), merchantInventoryHandler.List)
+			merchantProtected.GET("/inventory-alerts", middleware.RequireMerchantPermission(middleware.MerchantPermissionInventoryRead), merchantInventoryHandler.ListAlerts)
+			merchantProtected.PUT("/inventory/skus/:sku_id/stock", middleware.RequireMerchantPermission(middleware.MerchantPermissionInventoryWrite), merchantInventoryHandler.AdjustStock)
+			merchantProtected.GET("/dashboard/overview", middleware.RequireMerchantPermission(middleware.MerchantPermissionDashboardRead), merchantDashboardHandler.Overview)
+			merchantProtected.GET("/dashboard/analytics", middleware.RequireMerchantPermission(middleware.MerchantPermissionDashboardRead), merchantDashboardHandler.Analytics)
 		}
 
 		protected := api.Group("")
@@ -76,6 +118,9 @@ func NewRouter(
 			protected.POST("/payments", paymentHandler.Create)
 			protected.GET("/payments/:payment_no", paymentHandler.Detail)
 			protected.POST("/payments/:payment_no/mock-complete", paymentHandler.MockComplete)
+			protected.POST("/payments/:payment_no/sync", paymentHandler.Sync)
+
+			protected.POST("/uploads", uploadHandler.Image)
 		}
 	}
 

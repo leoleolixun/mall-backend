@@ -8,7 +8,9 @@ import (
 	"go-mall/internal/repository"
 	"go-mall/internal/router"
 	"go-mall/internal/service"
+	"go-mall/internal/storage"
 	"go-mall/pkg/logger"
+	"strings"
 
 	"go.uber.org/zap"
 )
@@ -22,6 +24,9 @@ func main() {
 	log, err := logger.New(cfg.Log)
 	if err != nil {
 		panic(err)
+	}
+	if strings.TrimSpace(cfg.JWT.MerchantAccessSecret) == "" {
+		log.Fatal("启动失败: jwt.merchant_access_secret 未配置")
 	}
 
 	db, err := bootstrap.InitMySQL(cfg.MySQL)
@@ -46,12 +51,22 @@ func main() {
 		log.Fatal("初始化 Redis 失败: ", zap.Error(err))
 	}
 
+	objectStorage, err := storage.New(cfg.Storage)
+	if err != nil {
+		log.Fatal("初始化图片存储失败: ", zap.Error(err))
+	}
+
 	categoryRepo := repository.NewCategoryRepository(db)
 	productRepo := repository.NewProductRepository(db)
 	authRepo := repository.NewAuthRepository(db)
 	addressRepo := repository.NewAddressRepository(db)
 	orderRepo := repository.NewOrderRepository(db)
 	paymentRepo := repository.NewPaymentRepository(db)
+	merchantAuthRepo := repository.NewMerchantAuthRepository(db)
+	merchantOrderRepo := repository.NewMerchantOrderRepository(db)
+	merchantCatalogRepo := repository.NewMerchantCatalogRepository(db)
+	merchantInventoryRepo := repository.NewMerchantInventoryRepository(db)
+	merchantDashboardRepo := repository.NewMerchantDashboardRepository(db)
 
 	categoryService := service.NewCategoryService(categoryRepo)
 	productService := service.NewProductService(productRepo, rdb)
@@ -60,6 +75,12 @@ func main() {
 	cartService := service.NewCartService(rdb, productRepo)
 	orderService := service.NewOrderService(orderRepo, addressRepo, productRepo, rdb)
 	paymentService := service.NewPaymentService(paymentRepo, cfg.Payment)
+	uploadService := service.NewUploadService(objectStorage, cfg.Storage)
+	merchantAuthService := service.NewMerchantAuthService(merchantAuthRepo, rdb, cfg.JWT)
+	merchantOrderService := service.NewMerchantOrderService(merchantOrderRepo)
+	merchantCatalogService := service.NewMerchantCatalogService(merchantCatalogRepo)
+	merchantInventoryService := service.NewMerchantInventoryService(merchantInventoryRepo)
+	merchantDashboardService := service.NewMerchantDashboardService(merchantDashboardRepo)
 
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	productHandler := handler.NewProductHandler(productService)
@@ -69,8 +90,14 @@ func main() {
 	cartHandler := handler.NewCartHandler(cartService)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 	orderHandler := handler.NewOrderHandler(orderService, paymentService)
+	uploadHandler := handler.NewUploadHandler(uploadService)
+	merchantAuthHandler := handler.NewMerchantAuthHandler(merchantAuthService)
+	merchantOrderHandler := handler.NewMerchantOrderHandler(merchantOrderService)
+	merchantCatalogHandler := handler.NewMerchantCatalogHandler(merchantCatalogService)
+	merchantInventoryHandler := handler.NewMerchantInventoryHandler(merchantInventoryService)
+	merchantDashboardHandler := handler.NewMerchantDashboardHandler(merchantDashboardService)
 
-	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, addressHandler, cartHandler, orderHandler, paymentHandler, cfg.JWT)
+	r := router.NewRouter(healthHandler, categoryHandler, productHandler, authHandler, addressHandler, cartHandler, orderHandler, paymentHandler, uploadHandler, merchantAuthHandler, merchantOrderHandler, merchantCatalogHandler, merchantInventoryHandler, merchantDashboardHandler, cfg.JWT)
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(addr); err != nil {

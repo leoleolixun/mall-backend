@@ -65,5 +65,21 @@ type OrderResponse struct {
 	Remark          string              `json:"remark"`
 	PaidAt          *string             `json:"paid_at"`
 	CancelledAt     *string             `json:"cancelled_at"`
+	CompletedAt     *string             `json:"completed_at"`
 	Items           []OrderItemResponse `json:"items"`
+	Shipment        *ShipmentResponse   `json:"shipment,omitempty"`
+	CreatedAt       string              `json:"created_at"`
+	UpdatedAt       string              `json:"updated_at"`
+}
+
+type LogisticsTraceResponse struct {
+	Time    string `json:"time"`
+	Content string `json:"content"`
+}
+
+type LogisticsResponse struct {
+	OrderID          int64                    `json:"order_id"`
+	LogisticsCompany string                   `json:"logistics_company"`
+	TrackingNo       string                   `json:"tracking_no"`
+	Traces           []LogisticsTraceResponse `json:"traces"`
 }

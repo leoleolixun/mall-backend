@@ -29,13 +29,13 @@ const (
 type Payment struct {
 	ID         int64  `gorm:"primaryKey" json:"id"`
 	PaymentNo  string `gorm:"type:varchar(64);not null;uniqueIndex" json:"payment_no"`
-	OrderID    int64  `gorm:"not null;index" json:"order_id"`
+	OrderID    int64  `gorm:"not null;index;index:idx_payments_order_status,priority:1" json:"order_id"`
 	OrderNo    string `gorm:"type:varchar(64);not null;index" json:"order_no"`
 	UserID     int64  `gorm:"not null;index" json:"user_id"`
 	MerchantID int64  `gorm:"not null;index" json:"merchant_id"`
 	PayChannel string `gorm:"type:varchar(32);not null;index" json:"pay_channel"`
 	PayScene   string `gorm:"type:varchar(32);not null;default:'';index" json:"pay_scene"`
-	Status     int    `gorm:"not null;default:1;index" json:"status"`
+	Status     int    `gorm:"not null;default:1;index;index:idx_payments_order_status,priority:2" json:"status"`
 	Amount     int64  `gorm:"not null;default:0" json:"amount"`
 
 	TransactionID string `gorm:"type:varchar(128);index" json:"transaction_id"`

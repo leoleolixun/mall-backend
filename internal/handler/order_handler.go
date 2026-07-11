@@ -128,6 +128,10 @@ func (h *OrderHandler) Cancel(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if err := h.paymentService.PrepareUserOrderForCancel(c.Request.Context(), userID, id); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
 
 	if err := h.orderService.Cancel(c.Request.Context(), userID, id); err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
@@ -135,6 +139,44 @@ func (h *OrderHandler) Cancel(c *gin.Context) {
 	}
 
 	response.Success(c, nil)
+}
+
+func (h *OrderHandler) Logistics(c *gin.Context) {
+	userID, ok := middleware.CurrentUserID(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "未登录")
+		return
+	}
+	id, ok := parseOrderID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.orderService.Logistics(c.Request.Context(), userID, id)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+	response.Success(c, result)
+}
+
+func (h *OrderHandler) Confirm(c *gin.Context) {
+	userID, ok := middleware.CurrentUserID(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "未登录")
+		return
+	}
+	id, ok := parseOrderID(c)
+	if !ok {
+		return
+	}
+
+	result, err := h.orderService.Confirm(c.Request.Context(), userID, id)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+	response.Success(c, result)
 }
 
 func (h *OrderHandler) Pay(c *gin.Context) {

@@ -20,10 +20,14 @@ type OrderRepository interface {
 
 	FindByIDAndUserID(ctx context.Context, id int64, userID int64) (*model.Order, error)
 	FindItemsByOrderID(ctx context.Context, orderID int64) ([]model.OrderItem, error)
+	FindShipmentByOrderID(ctx context.Context, orderID int64) (*model.Shipment, error)
 	ListByUserID(ctx context.Context, userID int64, offset int, limit int, status int) ([]model.Order, int64, error)
+	Complete(ctx context.Context, id int64, userID int64, completedAt time.Time) error
 
-	DecreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) error
-	IncreaseSKUStock(ctx context.Context, skuID int64, quantity int) error
+	DecreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error)
+	IncreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error)
+	CreateInventoryLogs(ctx context.Context, logs []model.InventoryLog) error
+	ClosePendingPayments(ctx context.Context, orderID int64, closedAt time.Time) error
 }
 
 type orderRepository struct {
@@ -115,6 +119,31 @@ func (r *orderRepository) FindItemsByOrderID(ctx context.Context, orderID int64)
 	return items, err
 }
 
+func (r *orderRepository) FindShipmentByOrderID(ctx context.Context, orderID int64) (*model.Shipment, error) {
+	var shipment model.Shipment
+	if err := r.db.WithContext(ctx).Where("order_id = ?", orderID).First(&shipment).Error; err != nil {
+		return nil, err
+	}
+	return &shipment, nil
+}
+
+func (r *orderRepository) Complete(ctx context.Context, id int64, userID int64, completedAt time.Time) error {
+	result := r.db.WithContext(ctx).
+		Model(&model.Order{}).
+		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.OrderStatusShipped).
+		Updates(map[string]interface{}{
+			"status":       model.OrderStatusCompleted,
+			"completed_at": completedAt,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("订单状态已变更")
+	}
+	return nil
+}
+
 func (r *orderRepository) ListByUserID(
 	ctx context.Context,
 	userID int64,
@@ -149,27 +178,63 @@ func (r *orderRepository) ListByUserID(
 	return orders, total, nil
 }
 
-func (r *orderRepository) DecreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) error {
+func (r *orderRepository) DecreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error) {
 	result := r.db.WithContext(ctx).
 		Model(&model.ProductSKU{}).
 		Where("merchant_id = ? AND id = ? AND stock >= ?", merchantID, skuID, quantity).
 		UpdateColumn("stock", gorm.Expr("stock - ?", quantity))
 
 	if result.Error != nil {
-		return result.Error
+		return 0, result.Error
 	}
 
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("库存不足")
+		return 0, fmt.Errorf("库存不足")
 	}
 
-	return nil
+	return r.findSKUStock(ctx, merchantID, skuID, false)
 }
 
-func (r *orderRepository) IncreaseSKUStock(ctx context.Context, skuID int64, quantity int) error {
-	return r.db.WithContext(ctx).
+func (r *orderRepository) IncreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error) {
+	result := r.db.WithContext(ctx).
+		Unscoped().
 		Model(&model.ProductSKU{}).
-		Where("id = ?", skuID).
-		UpdateColumn("stock", gorm.Expr("stock + ?", quantity)).
-		Error
+		Where("id = ? AND merchant_id = ?", skuID, merchantID).
+		UpdateColumn("stock", gorm.Expr("stock + ?", quantity))
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return 0, fmt.Errorf("SKU %d 不存在，无法恢复库存", skuID)
+	}
+	return r.findSKUStock(ctx, merchantID, skuID, true)
+}
+
+func (r *orderRepository) findSKUStock(ctx context.Context, merchantID int64, skuID int64, unscoped bool) (int, error) {
+	query := r.db.WithContext(ctx).Model(&model.ProductSKU{})
+	if unscoped {
+		query = query.Unscoped()
+	}
+	var sku model.ProductSKU
+	if err := query.Select("stock").Where("id = ? AND merchant_id = ?", skuID, merchantID).First(&sku).Error; err != nil {
+		return 0, err
+	}
+	return sku.Stock, nil
+}
+
+func (r *orderRepository) CreateInventoryLogs(ctx context.Context, logs []model.InventoryLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Create(&logs).Error
+}
+
+func (r *orderRepository) ClosePendingPayments(ctx context.Context, orderID int64, closedAt time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Payment{}).
+		Where("order_id = ? AND status = ?", orderID, model.PaymentStatusPending).
+		Updates(map[string]interface{}{
+			"status":    model.PaymentStatusClosed,
+			"closed_at": &closedAt,
+		}).Error
 }
