@@ -10,6 +10,8 @@ info:
 
     标注为“规划接口，后端尚未实现”的接口用于前端 Mock 和后续后端开发排期。
 servers:
+  - url: /
+    description: current environment
   - url: http://localhost:8080
     description: local
 tags:
