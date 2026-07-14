@@ -1,15 +1,18 @@
 package middleware
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"go-mall/internal/authorization"
 	"go-mall/internal/config"
+	"go-mall/internal/model"
 	"go-mall/pkg/jwt"
 	"go-mall/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -35,7 +38,19 @@ const (
 	MerchantPermissionInventoryRead  = authorization.MerchantPermissionInventoryRead
 	MerchantPermissionInventoryWrite = authorization.MerchantPermissionInventoryWrite
 	MerchantPermissionUpload         = authorization.MerchantPermissionUpload
+	MerchantPermissionAccountRead    = authorization.MerchantPermissionAccountRead
+	MerchantPermissionAccountWrite   = authorization.MerchantPermissionAccountWrite
+	MerchantPermissionCustomerRead   = authorization.MerchantPermissionCustomerRead
+	MerchantPermissionAfterSaleRead  = authorization.MerchantPermissionAfterSaleRead
+	MerchantPermissionAfterSaleWrite = authorization.MerchantPermissionAfterSaleWrite
+	MerchantPermissionMarketingRead  = authorization.MerchantPermissionMarketingRead
+	MerchantPermissionMarketingWrite = authorization.MerchantPermissionMarketingWrite
 )
+
+type MerchantAccountLoader interface {
+	FindByIDAndMerchantID(ctx context.Context, accountID int64, merchantID int64) (*model.MerchantAccount, error)
+	FindMerchantByID(ctx context.Context, merchantID int64) (*model.Merchant, error)
+}
 
 func MerchantRoleHasPermission(role string, permission MerchantPermission) bool {
 	return authorization.MerchantRoleHasPermission(role, permission)
@@ -58,7 +73,7 @@ func RequireMerchantPermission(permission MerchantPermission) gin.HandlerFunc {
 	}
 }
 
-func MerchantAuth(jwtCfg config.JWTConfig) gin.HandlerFunc {
+func MerchantAuth(jwtCfg config.JWTConfig, accountLoader MerchantAccountLoader, redisClient *redis.Client) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		parts := strings.SplitN(authHeader, " ", 2)
@@ -74,10 +89,35 @@ func MerchantAuth(jwtCfg config.JWTConfig) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		account, err := accountLoader.FindByIDAndMerchantID(c.Request.Context(), claims.AccountID, claims.MerchantID)
+		if err != nil || account.Status != model.StatusEnabled || !model.IsValidMerchantRole(account.Role) {
+			response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "商家账号不可用")
+			c.Abort()
+			return
+		}
+		merchant, err := accountLoader.FindMerchantByID(c.Request.Context(), account.MerchantID)
+		if err != nil || merchant.Status != model.StatusEnabled {
+			response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "商户不可用")
+			c.Abort()
+			return
+		}
+		currentVersion, err := redisClient.Get(c.Request.Context(), authorization.MerchantAccountSessionVersionKey(account.ID)).Int64()
+		if err == redis.Nil {
+			currentVersion = 0
+		} else if err != nil {
+			response.Error(c, http.StatusServiceUnavailable, response.CodeInternalError, "商家鉴权服务暂不可用")
+			c.Abort()
+			return
+		}
+		if claims.SessionVersion != currentVersion {
+			response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "登录状态已失效，请重新登录")
+			c.Abort()
+			return
+		}
 
-		c.Set(ContextMerchantAccountIDKey, claims.AccountID)
-		c.Set(ContextMerchantIDKey, claims.MerchantID)
-		c.Set(ContextMerchantRoleKey, claims.Role)
+		c.Set(ContextMerchantAccountIDKey, account.ID)
+		c.Set(ContextMerchantIDKey, account.MerchantID)
+		c.Set(ContextMerchantRoleKey, account.Role)
 		c.Next()
 	}
 }

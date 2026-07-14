@@ -46,7 +46,7 @@ tags:
   - name: Upload
     description: 文件上传
   - name: MerchantAdmin
-    description: 商家后台接口；认证、上传、订单、分类、商品、SKU 和库存流水管理已实现
+    description: 商家后台接口；认证、员工角色、上传、订单、分类、商品、SKU、库存、经营数据和顾客复购分析已实现
   - name: PlatformAdmin
     description: 平台后台，二期规划接口
 
@@ -582,16 +582,10 @@ paths:
       tags:
         - Coupon
       summary: 可领取优惠券列表
-      description: 规划接口，后端尚未实现。
+      description: 已实现。返回默认商户当前有效且仍有库存的优惠券，并标识当前用户是否达到领取上限。
       operationId: listCoupons
-      parameters:
-        - name: merchant_id
-          in: query
-          required: false
-          schema:
-            type: integer
-            format: int64
-          description: 商户 ID，不传则返回平台可见优惠券
+      security:
+        - bearerAuth: []
       responses:
         "200":
           description: 查询成功
@@ -612,7 +606,7 @@ paths:
       tags:
         - Coupon
       summary: 领取优惠券
-      description: 规划接口，后端尚未实现。
+      description: 已实现。使用数据库行锁校验发行量和每人限领数量，避免并发超发。
       operationId: claimCoupon
       security:
         - bearerAuth: []
@@ -640,7 +634,7 @@ paths:
       tags:
         - Coupon
       summary: 我的优惠券
-      description: 规划接口，后端尚未实现。
+      description: 已实现。支持按未使用、已使用和已过期状态筛选。
       operationId: listMyCoupons
       security:
         - bearerAuth: []
@@ -1081,7 +1075,7 @@ paths:
       tags:
         - Order
       summary: 确认收货
-      description: 后续规划接口。当前 MVP 的订单流程停在已发货，后端未注册此路由。
+      description: 已实现。只有订单本人可以确认已发货订单；重复确认幂等返回订单详情。超时订单由独立自动完成任务处理。
       operationId: confirmOrder
       security:
         - bearerAuth: []
@@ -1109,7 +1103,7 @@ paths:
       tags:
         - Logistics
       summary: 查询订单物流
-      description: 后续规划接口。当前 MVP 不提供买家物流轨迹查询，后端未注册此路由。
+      description: 已实现基础物流信息查询，返回配送方式、物流公司、运单号、发货时间、预计送达和签收时间；暂不调用第三方快递轨迹 API。
       operationId: getOrderLogistics
       security:
         - bearerAuth: []
@@ -1308,7 +1302,7 @@ paths:
       tags:
         - AfterSale
       summary: 售后申请列表
-      description: 规划接口，后端尚未实现。
+      description: 已实现。仅返回当前用户自己的售后申请。
       operationId: listAfterSales
       security:
         - bearerAuth: []
@@ -1346,7 +1340,7 @@ paths:
       tags:
         - AfterSale
       summary: 创建售后申请
-      description: 规划接口，后端尚未实现。
+      description: 已实现。已支付、已发货和已完成订单可按订单商品申请仅退款或退货退款；退款金额按订单优惠比例分摊。
       operationId: createAfterSale
       security:
         - bearerAuth: []
@@ -1378,7 +1372,7 @@ paths:
       tags:
         - AfterSale
       summary: 售后详情
-      description: 规划接口，后端尚未实现。
+      description: 已实现。返回售后、订单商品和退款单状态。
       operationId: getAfterSale
       security:
         - bearerAuth: []
@@ -1406,7 +1400,7 @@ paths:
       tags:
         - AfterSale
       summary: 取消售后申请
-      description: 规划接口，后端尚未实现。
+      description: 已实现。只有待审核申请可以由申请人取消。
       operationId: cancelAfterSale
       security:
         - bearerAuth: []
@@ -1569,6 +1563,200 @@ paths:
                         $ref: "#/components/schemas/MerchantUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/accounts:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家员工账号列表
+      description: 已实现。仅 owner 和 admin 可查询当前商户员工账号，不返回密码哈希。
+      operationId: listMerchantAccounts
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: keyword
+          in: query
+          description: 登录账号或员工昵称关键词
+          schema:
+            type: string
+            maxLength: 100
+        - name: role
+          in: query
+          schema:
+            $ref: "#/components/schemas/MerchantRoleCode"
+        - name: status
+          in: query
+          schema:
+            type: integer
+            enum: [0, 1]
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantAccountPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 创建商家员工账号
+      description: 已实现。owner 可创建全部角色；admin 只能创建 operator、sales、warehouse。
+      operationId: createMerchantAccount
+      security:
+        - merchantBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantAccountCreateRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/accounts/{id}:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 更新商家员工账号
+      description: 已实现。更新昵称、角色和状态；不能停用当前账号，不能移除最后一个启用的 owner，admin 不能管理 owner 或 admin。
+      operationId: updateMerchantAccount
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          description: 商家员工账号 ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantAccountUpdateRequest"
+      responses:
+        "200":
+          description: 更新成功，目标账号已有访问令牌和刷新令牌立即失效
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantAccount"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/accounts/{id}/password:
+    put:
+      tags:
+        - MerchantAdmin
+      summary: 重置商家员工密码
+      description: 已实现。密码重置后目标账号已有访问令牌和刷新令牌立即失效。
+      operationId: resetMerchantAccountPassword
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          description: 商家员工账号 ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MerchantAccountPasswordRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/SuccessEmpty"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/roles:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家固定角色与权限
+      description: 已实现。返回系统固定角色、权限列表和当前商户成员数量；第一版不支持动态新增角色。
+      operationId: listMerchantRoles
+      security:
+        - merchantBearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MerchantRoleDefinition"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/merchant/uploads:
     post:
@@ -2160,7 +2348,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台优惠券列表
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。分页返回当前商户优惠券。
       operationId: listMerchantCoupons
       security:
         - merchantBearerAuth: []
@@ -2175,16 +2363,14 @@ paths:
                   - type: object
                     properties:
                       data:
-                        type: array
-                        items:
-                          $ref: "#/components/schemas/Coupon"
+                        $ref: "#/components/schemas/CouponPage"
         "401":
           $ref: "#/components/responses/Unauthorized"
     post:
       tags:
         - MerchantAdmin
       summary: 商家后台创建优惠券
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。创建满减券，可配置总量、限领数量、有效期和发放状态。
       operationId: createMerchantCoupon
       security:
         - merchantBearerAuth: []
@@ -2216,7 +2402,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台更新优惠券
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。发行总量不能低于已领取数量。
       operationId: updateMerchantCoupon
       security:
         - merchantBearerAuth: []
@@ -2250,7 +2436,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家后台售后列表
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。分页查询当前商户售后申请并支持状态筛选。
       operationId: listMerchantAfterSales
       security:
         - merchantBearerAuth: []
@@ -2280,7 +2466,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家同意售后
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。创建独立退款单并原路退款；mock 立即成功，支付宝调用 alipay.trade.refund，失败状态可重试，微信退款尚未接入。
       operationId: approveMerchantAfterSale
       security:
         - merchantBearerAuth: []
@@ -2308,7 +2494,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家拒绝售后
-      description: 二期规划接口，后端尚未实现。
+      description: 已实现。只有待审核申请可以拒绝，必须填写拒绝原因。
       operationId: rejectMerchantAfterSale
       security:
         - merchantBearerAuth: []
@@ -2405,6 +2591,125 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/customers/overview:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家顾客与复购概览
+      description: 已实现。仅统计当前商户状态为已付款、已发货、已完成且 paid_at 非空的订单；复购顾客定义为累计成交订单至少 2 单。
+      operationId: getMerchantCustomerOverview
+      security:
+        - merchantBearerAuth: []
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantCustomerOverview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/customers:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家成交顾客列表
+      description: 已实现。只返回至少在当前商户完成过一次支付的顾客；手机号仅返回脱敏值，已注销用户的昵称、头像和手机号会被匿名化。
+      operationId: listMerchantCustomers
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: keyword
+          in: query
+          description: 用户昵称或手机号关键词
+          schema:
+            type: string
+            maxLength: 100
+        - name: repeat_only
+          in: query
+          description: 是否只返回累计成交订单至少 2 单的复购顾客
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantCustomerPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/customers/{id}:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家顾客详情
+      description: 已实现。返回当前商户内的成交统计和最近 10 个订单，不包含该顾客在其他商户的订单。
+      operationId: getMerchantCustomer
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 顾客用户 ID
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantCustomerDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /api/v1/merchant/orders:
     get:
@@ -3609,6 +3914,184 @@ components:
           format: int64
           example: 1
 
+    MerchantCustomerOverview:
+      type: object
+      required:
+        - total_customers
+        - repeat_customers
+        - repeat_rate_bps
+        - new_customers_30d
+        - active_customers_30d
+        - total_paid_amount
+        - average_paid_amount
+        - generated_at
+      properties:
+        total_customers:
+          type: integer
+          format: int64
+          example: 120
+        repeat_customers:
+          type: integer
+          format: int64
+          example: 32
+        repeat_rate_bps:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000
+          description: 复购率基点，2500 表示 25.00%
+          example: 2666
+        new_customers_30d:
+          type: integer
+          format: int64
+          description: 最近 30 天首次在当前商户成交的顾客数
+          example: 18
+        active_customers_30d:
+          type: integer
+          format: int64
+          description: 最近 30 天在当前商户有成交的顾客数
+          example: 45
+        total_paid_amount:
+          type: integer
+          format: int64
+          description: 当前商户顾客累计成交金额，单位分
+          example: 580000
+        average_paid_amount:
+          type: integer
+          format: int64
+          description: 每位成交顾客平均累计成交金额，单位分
+          example: 4833
+        generated_at:
+          type: string
+          format: date-time
+
+    MerchantCustomer:
+      type: object
+      required:
+        - user_id
+        - nickname
+        - avatar
+        - mobile_masked
+        - user_status
+        - paid_orders
+        - total_paid_amount
+        - first_paid_at
+        - last_paid_at
+        - registered_at
+        - is_repeat
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          example: 12
+        nickname:
+          type: string
+          example: 李先生
+        avatar:
+          type: string
+          example: https://example.com/avatar.jpg
+        mobile_masked:
+          type: string
+          description: 脱敏手机号
+          example: 138****5678
+        user_status:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        paid_orders:
+          type: integer
+          format: int64
+          example: 3
+        total_paid_amount:
+          type: integer
+          format: int64
+          description: 在当前商户的累计成交金额，单位分
+          example: 29900
+        first_paid_at:
+          type: string
+          format: date-time
+        last_paid_at:
+          type: string
+          format: date-time
+        registered_at:
+          type: string
+          format: date-time
+        is_repeat:
+          type: boolean
+          description: 在当前商户累计成交订单是否至少 2 单
+          example: true
+
+    MerchantCustomerPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantCustomer"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 120
+
+    MerchantCustomerOrder:
+      type: object
+      required:
+        - id
+        - order_no
+        - status
+        - status_text
+        - payable_amount
+        - created_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        order_no:
+          type: string
+          example: "202607150001"
+        status:
+          $ref: "#/components/schemas/OrderStatus"
+        status_text:
+          type: string
+          example: 已付款
+        payable_amount:
+          type: integer
+          format: int64
+          description: 单位分
+          example: 9900
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    MerchantCustomerDetail:
+      type: object
+      required:
+        - customer
+        - recent_orders
+      properties:
+        customer:
+          $ref: "#/components/schemas/MerchantCustomer"
+        recent_orders:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/MerchantCustomerOrder"
+
     MerchantDashboardOverview:
       type: object
       required:
@@ -3766,7 +4249,7 @@ components:
         password:
           type: string
           format: password
-          example: "123456"
+          example: "merchant-password"
         nickname:
           type: string
           example: 测试用户
@@ -4030,26 +4513,21 @@ components:
           format: int64
           example: 1
 
-    CouponType:
-      type: string
-      description: 优惠券类型
-      enum:
-        - amount
-        - discount
-        - free_shipping
-      example: amount
-
     Coupon:
       type: object
       required:
         - id
         - merchant_id
         - name
-        - type
         - threshold_amount
         - discount_amount
-        - started_at
-        - ended_at
+        - total_quantity
+        - claimed_quantity
+        - used_quantity
+        - per_user_limit
+        - status
+        - start_at
+        - end_at
       properties:
         id:
           type: integer
@@ -4063,8 +4541,6 @@ components:
         name:
           type: string
           example: 满 100 减 10
-        type:
-          $ref: "#/components/schemas/CouponType"
         threshold_amount:
           type: integer
           format: int64
@@ -4075,22 +4551,30 @@ components:
           format: int64
           description: 优惠金额，单位分
           example: 1000
-        discount_rate:
-          type: integer
-          description: 折扣券折扣，9000 表示 9 折
-          nullable: true
-          example: null
         total_quantity:
           type: integer
           example: 1000
         claimed_quantity:
           type: integer
           example: 100
-        started_at:
+        used_quantity:
+          type: integer
+          example: 20
+        per_user_limit:
+          type: integer
+          example: 1
+        status:
+          type: integer
+          enum: [0, 1, 2]
+          description: 0 草稿，1 发放中，2 停用
+        status_text:
+          type: string
+          example: 发放中
+        start_at:
           type: string
           format: date-time
           example: "2026-07-01T00:00:00+08:00"
-        ended_at:
+        end_at:
           type: string
           format: date-time
           example: "2026-07-31T23:59:59+08:00"
@@ -4099,16 +4583,15 @@ components:
       type: object
       required:
         - name
-        - type
         - threshold_amount
-        - started_at
-        - ended_at
+        - discount_amount
+        - total_quantity
+        - start_at
+        - end_at
       properties:
         name:
           type: string
           example: 满 100 减 10
-        type:
-          $ref: "#/components/schemas/CouponType"
         threshold_amount:
           type: integer
           format: int64
@@ -4119,19 +4602,22 @@ components:
           format: int64
           description: 优惠金额，单位分
           example: 1000
-        discount_rate:
-          type: integer
-          nullable: true
-          description: 折扣券折扣，9000 表示 9 折
-          example: null
         total_quantity:
           type: integer
           example: 1000
-        started_at:
+        per_user_limit:
+          type: integer
+          minimum: 1
+          default: 1
+        status:
+          type: integer
+          enum: [0, 1, 2]
+          default: 0
+        start_at:
           type: string
           format: date-time
           example: "2026-07-01T00:00:00+08:00"
-        ended_at:
+        end_at:
           type: string
           format: date-time
           example: "2026-07-31T23:59:59+08:00"
@@ -4164,11 +4650,35 @@ components:
           $ref: "#/components/schemas/Coupon"
         status:
           $ref: "#/components/schemas/UserCouponStatus"
+        status_text:
+          type: string
+        claimed_at:
+          type: string
+          format: date-time
+        order_id:
+          type: integer
+          format: int64
         used_at:
           type: string
           format: date-time
           nullable: true
           example: null
+
+    CouponPage:
+      type: object
+      required: [list, page, page_size, total]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/Coupon"
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          format: int64
 
     MerchantLoginRequest:
       type: object
@@ -4210,6 +4720,193 @@ components:
         user:
           $ref: "#/components/schemas/MerchantUser"
 
+    MerchantRoleCode:
+      type: string
+      description: 商家后台固定岗位角色
+      enum:
+        - owner
+        - admin
+        - operator
+        - sales
+        - warehouse
+      example: sales
+
+    MerchantPermissionCode:
+      type: string
+      enum:
+        - dashboard:read
+        - order:read
+        - order:ship
+        - catalog:read
+        - catalog:write
+        - inventory:read
+        - inventory:write
+        - upload:write
+        - account:read
+        - account:write
+        - customer:read
+      example: order:read
+
+    MerchantAccountCreateRequest:
+      type: object
+      required:
+        - username
+        - password
+        - nickname
+        - role
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._@-]{2,99}$"
+          example: sales01
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          example: secure-password
+        nickname:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: 销售一组
+        role:
+          $ref: "#/components/schemas/MerchantRoleCode"
+        status:
+          type: integer
+          enum: [0, 1]
+          default: 1
+
+    MerchantAccountUpdateRequest:
+      type: object
+      required:
+        - nickname
+        - role
+        - status
+      properties:
+        nickname:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: 销售一组
+        role:
+          $ref: "#/components/schemas/MerchantRoleCode"
+        status:
+          type: integer
+          enum: [0, 1]
+          example: 1
+
+    MerchantAccountPasswordRequest:
+      type: object
+      required:
+        - password
+      properties:
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 72
+          example: new-secure-password
+
+    MerchantAccount:
+      type: object
+      required:
+        - id
+        - merchant_id
+        - username
+        - nickname
+        - role
+        - role_name
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 2
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+        username:
+          type: string
+          example: sales01
+        nickname:
+          type: string
+          example: 销售一组
+        role:
+          $ref: "#/components/schemas/MerchantRoleCode"
+        role_name:
+          type: string
+          example: 销售人员
+        status:
+          type: integer
+          enum: [0, 1]
+          example: 1
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-07-14T10:00:00+08:00"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MerchantAccountPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantAccount"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 10
+        total:
+          type: integer
+          format: int64
+          example: 5
+
+    MerchantRoleDefinition:
+      type: object
+      required:
+        - role
+        - name
+        - description
+        - permissions
+        - member_count
+      properties:
+        role:
+          $ref: "#/components/schemas/MerchantRoleCode"
+        name:
+          type: string
+          example: 销售人员
+        description:
+          type: string
+          example: 可查看经营数据、订单和商品
+        permissions:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantPermissionCode"
+        member_count:
+          type: integer
+          format: int64
+          example: 2
+
     MerchantUser:
       type: object
       required:
@@ -4239,29 +4936,12 @@ components:
           type: string
           example: 店铺管理员
         role:
-          type: string
-          description: 商家账号角色
-          enum:
-            - owner
-            - admin
-            - operator
-            - sales
-            - warehouse
-          example: owner
+          $ref: "#/components/schemas/MerchantRoleCode"
         permissions:
           type: array
           description: 前端用于控制菜单和按钮；后端仍会独立校验权限
           items:
-            type: string
-            enum:
-              - dashboard:read
-              - order:read
-              - order:ship
-              - catalog:read
-              - catalog:write
-              - inventory:read
-              - inventory:write
-              - upload:write
+            $ref: "#/components/schemas/MerchantPermissionCode"
           example:
             - dashboard:read
             - order:read
@@ -4464,7 +5144,6 @@ components:
       type: object
       required:
         - address_id
-        - idempotency_token
         - items
       properties:
         address_id:
@@ -4473,6 +5152,10 @@ components:
           minimum: 1
           description: 收货地址 ID
           example: 1
+        user_coupon_id:
+          type: integer
+          format: int64
+          description: 可选，用户已领取且未使用的优惠券 ID
         items:
           type: array
           minItems: 1
@@ -4484,6 +5167,7 @@ components:
       type: object
       required:
         - address_id
+        - idempotency_token
         - items
       properties:
         address_id:
@@ -4492,6 +5176,10 @@ components:
           minimum: 1
           description: 收货地址 ID
           example: 1
+        user_coupon_id:
+          type: integer
+          format: int64
+          description: 必须与订单预览时选择的优惠券一致
         remark:
           type: string
           description: 买家备注
@@ -4566,12 +5254,14 @@ components:
         3 已关闭
         4 支付失败
         5 已退款
+        6 部分退款
       enum:
         - 1
         - 2
         - 3
         - 4
         - 5
+        - 6
       example: 1
 
     CreatePaymentRequest:
@@ -4647,6 +5337,10 @@ components:
           type: string
           maxLength: 100
           example: SF1234567890
+        estimated_arrival_at:
+          type: string
+          format: date-time
+          description: 可选预计送达时间，必须晚于当前时间
 
     Shipment:
       type: object
@@ -4682,11 +5376,20 @@ components:
           type: string
           format: date-time
           example: "2026-07-10T20:30:00+08:00"
+        estimated_arrival_at:
+          type: string
+          format: date-time
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
 
     LogisticsInfo:
       type: object
       required:
         - order_id
+        - delivery_type
         - logistics_company
         - tracking_no
         - traces
@@ -4695,12 +5398,26 @@ components:
           type: integer
           format: int64
           example: 1
+        delivery_type:
+          type: string
+          enum: [express, self_delivery]
         logistics_company:
           type: string
           example: 顺丰速运
         tracking_no:
           type: string
           example: SF1234567890
+        shipped_at:
+          type: string
+          format: date-time
+        estimated_arrival_at:
+          type: string
+          format: date-time
+          nullable: true
+        received_at:
+          type: string
+          format: date-time
+          nullable: true
         traces:
           type: array
           items:
@@ -4961,16 +5678,18 @@ components:
       description: |
         售后状态：
         1 待审核
-        2 已同意
-        3 已拒绝
-        4 已取消
-        5 已退款
+        2 退款处理中
+        3 退款成功
+        4 商家已拒绝
+        5 用户已取消
+        6 退款失败
       enum:
         - 1
         - 2
         - 3
         - 4
         - 5
+        - 6
       example: 1
 
     CreateAfterSaleRequest:
@@ -4996,6 +5715,9 @@ components:
         reason:
           type: string
           example: 商品不想要了
+        description:
+          type: string
+          maxLength: 500
         images:
           type: array
           items:
@@ -5006,9 +5728,9 @@ components:
     RejectAfterSaleRequest:
       type: object
       required:
-        - reject_reason
+        - reason
       properties:
-        reject_reason:
+        reason:
           type: string
           example: 商品已影响二次销售
 
@@ -5016,6 +5738,7 @@ components:
       type: object
       required:
         - id
+        - after_sale_no
         - order_id
         - order_item_id
         - type
@@ -5028,6 +5751,10 @@ components:
           type: integer
           format: int64
           example: 1
+        after_sale_no:
+          type: string
+        order_no:
+          type: string
         order_id:
           type: integer
           format: int64
@@ -5043,6 +5770,14 @@ components:
         reason:
           type: string
           example: 商品不想要了
+        description:
+          type: string
+        product_name:
+          type: string
+        sku_name:
+          type: string
+        sku_image:
+          type: string
         reject_reason:
           type: string
           nullable: true
@@ -5060,6 +5795,48 @@ components:
           type: string
           format: date-time
           example: "2026-07-06T09:30:00+08:00"
+        updated_at:
+          type: string
+          format: date-time
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        cancelled_at:
+          type: string
+          format: date-time
+          nullable: true
+        refunded_at:
+          type: string
+          format: date-time
+          nullable: true
+        refund:
+          $ref: "#/components/schemas/Refund"
+
+    Refund:
+      type: object
+      properties:
+        refund_no:
+          type: string
+        pay_channel:
+          type: string
+        amount:
+          type: integer
+          format: int64
+        status:
+          type: integer
+          enum: [1, 2, 3]
+          description: 1 处理中，2 成功，3 失败
+        status_text:
+          type: string
+        transaction_id:
+          type: string
+        failure_reason:
+          type: string
+        refunded_at:
+          type: string
+          format: date-time
+          nullable: true
 
     AfterSalePage:
       type: object

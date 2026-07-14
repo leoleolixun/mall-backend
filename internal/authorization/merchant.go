@@ -1,8 +1,16 @@
 package authorization
 
-import "go-mall/internal/model"
+import (
+	"fmt"
+
+	"go-mall/internal/model"
+)
 
 type MerchantPermission string
+
+func MerchantAccountSessionVersionKey(accountID int64) string {
+	return fmt.Sprintf("mall:merchant:auth:session_version:%d", accountID)
+}
 
 const (
 	MerchantPermissionDashboardRead  MerchantPermission = "dashboard:read"
@@ -13,6 +21,13 @@ const (
 	MerchantPermissionInventoryRead  MerchantPermission = "inventory:read"
 	MerchantPermissionInventoryWrite MerchantPermission = "inventory:write"
 	MerchantPermissionUpload         MerchantPermission = "upload:write"
+	MerchantPermissionAccountRead    MerchantPermission = "account:read"
+	MerchantPermissionAccountWrite   MerchantPermission = "account:write"
+	MerchantPermissionCustomerRead   MerchantPermission = "customer:read"
+	MerchantPermissionAfterSaleRead  MerchantPermission = "after_sale:read"
+	MerchantPermissionAfterSaleWrite MerchantPermission = "after_sale:write"
+	MerchantPermissionMarketingRead  MerchantPermission = "marketing:read"
+	MerchantPermissionMarketingWrite MerchantPermission = "marketing:write"
 )
 
 var allMerchantPermissions = []MerchantPermission{
@@ -24,14 +39,41 @@ var allMerchantPermissions = []MerchantPermission{
 	MerchantPermissionInventoryRead,
 	MerchantPermissionInventoryWrite,
 	MerchantPermissionUpload,
+	MerchantPermissionAccountRead,
+	MerchantPermissionAccountWrite,
+	MerchantPermissionCustomerRead,
+	MerchantPermissionAfterSaleRead,
+	MerchantPermissionAfterSaleWrite,
+	MerchantPermissionMarketingRead,
+	MerchantPermissionMarketingWrite,
+}
+
+var merchantOperatorPermissions = []MerchantPermission{
+	MerchantPermissionDashboardRead,
+	MerchantPermissionOrderRead,
+	MerchantPermissionOrderShip,
+	MerchantPermissionCatalogRead,
+	MerchantPermissionCatalogWrite,
+	MerchantPermissionInventoryRead,
+	MerchantPermissionInventoryWrite,
+	MerchantPermissionUpload,
+	MerchantPermissionCustomerRead,
+	MerchantPermissionAfterSaleRead,
+	MerchantPermissionAfterSaleWrite,
+	MerchantPermissionMarketingRead,
+	MerchantPermissionMarketingWrite,
 }
 
 var merchantRolePermissions = map[string][]MerchantPermission{
-	model.MerchantRoleOperator: allMerchantPermissions,
+	model.MerchantRoleOperator: merchantOperatorPermissions,
 	model.MerchantRoleSales: {
 		MerchantPermissionDashboardRead,
 		MerchantPermissionOrderRead,
 		MerchantPermissionCatalogRead,
+		MerchantPermissionCustomerRead,
+		MerchantPermissionAfterSaleRead,
+		MerchantPermissionMarketingRead,
+		MerchantPermissionMarketingWrite,
 	},
 	model.MerchantRoleWarehouse: {
 		MerchantPermissionOrderRead,
@@ -39,6 +81,7 @@ var merchantRolePermissions = map[string][]MerchantPermission{
 		MerchantPermissionCatalogRead,
 		MerchantPermissionInventoryRead,
 		MerchantPermissionInventoryWrite,
+		MerchantPermissionAfterSaleRead,
 	},
 }
 

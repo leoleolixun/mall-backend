@@ -32,13 +32,24 @@ func toShipmentResponse(shipment *model.Shipment) *dto.ShipmentResponse {
 	if shipment == nil {
 		return nil
 	}
+	var estimatedArrivalAt, receivedAt *string
+	if shipment.EstimatedArrivalAt != nil {
+		value := shipment.EstimatedArrivalAt.Format(time.RFC3339)
+		estimatedArrivalAt = &value
+	}
+	if shipment.ReceivedAt != nil {
+		value := shipment.ReceivedAt.Format(time.RFC3339)
+		receivedAt = &value
+	}
 	return &dto.ShipmentResponse{
-		ID:               shipment.ID,
-		OrderID:          shipment.OrderID,
-		DeliveryType:     shipment.DeliveryType,
-		LogisticsCompany: shipment.LogisticsCompany,
-		TrackingNo:       shipment.TrackingNo,
-		ShippedAt:        shipment.ShippedAt.Format(time.RFC3339),
+		ID:                 shipment.ID,
+		OrderID:            shipment.OrderID,
+		DeliveryType:       shipment.DeliveryType,
+		LogisticsCompany:   shipment.LogisticsCompany,
+		TrackingNo:         shipment.TrackingNo,
+		ShippedAt:          shipment.ShippedAt.Format(time.RFC3339),
+		EstimatedArrivalAt: estimatedArrivalAt,
+		ReceivedAt:         receivedAt,
 	}
 }
 
@@ -186,6 +197,14 @@ func (s *merchantOrderService) Ship(
 	if len([]rune(company)) > 100 || len(trackingNo) > 100 {
 		return nil, fmt.Errorf("物流公司或运单号过长")
 	}
+	var estimatedArrivalAt *time.Time
+	if strings.TrimSpace(req.EstimatedArrivalAt) != "" {
+		value, err := time.Parse(time.RFC3339, req.EstimatedArrivalAt)
+		if err != nil || !value.After(time.Now()) {
+			return nil, fmt.Errorf("预计送达时间必须是未来的 RFC3339 时间")
+		}
+		estimatedArrivalAt = &value
+	}
 	if _, err := s.activeMerchant(ctx, merchantID); err != nil {
 		return nil, err
 	}
@@ -207,12 +226,13 @@ func (s *merchantOrderService) Ship(
 		}
 
 		shipment := &model.Shipment{
-			OrderID:          order.ID,
-			MerchantID:       merchantID,
-			DeliveryType:     deliveryType,
-			LogisticsCompany: company,
-			TrackingNo:       trackingNo,
-			ShippedAt:        time.Now(),
+			OrderID:            order.ID,
+			MerchantID:         merchantID,
+			DeliveryType:       deliveryType,
+			LogisticsCompany:   company,
+			TrackingNo:         trackingNo,
+			ShippedAt:          time.Now(),
+			EstimatedArrivalAt: estimatedArrivalAt,
 		}
 		if err := repo.CreateShipment(ctx, shipment); err != nil {
 			return err

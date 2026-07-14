@@ -1,0 +1,11 @@
+[Unit]
+Description=Run go-mall shipped order completion job hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=60
+Unit=go-mall-complete-shipped-orders.service
+
+[Install]
+WantedBy=timers.target

@@ -19,11 +19,12 @@ const (
 )
 
 const (
-	PaymentStatusPending  = 1 // 待支付
-	PaymentStatusPaid     = 2 // 已支付
-	PaymentStatusClosed   = 3 // 已关闭
-	PaymentStatusFailed   = 4 // 支付失败
-	PaymentStatusRefunded = 5 // 已退款
+	PaymentStatusPending           = 1 // 待支付
+	PaymentStatusPaid              = 2 // 已支付
+	PaymentStatusClosed            = 3 // 已关闭
+	PaymentStatusFailed            = 4 // 支付失败
+	PaymentStatusRefunded          = 5 // 已退款
+	PaymentStatusPartiallyRefunded = 6 // 部分退款
 )
 
 type Payment struct {

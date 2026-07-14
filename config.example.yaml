@@ -10,6 +10,10 @@ order:
   pending_payment_timeout_minutes: 15
   # 每次任务最多处理的订单数，最大限制为 1000。
   cancel_batch_size: 100
+  # 发货超过指定天数后自动确认收货，由 complete-shipped-orders 定时任务处理。
+  auto_complete_enabled: false
+  shipped_auto_complete_days: 10
+  complete_batch_size: 100
 
 server:
   port: 8080

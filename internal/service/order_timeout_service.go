@@ -139,6 +139,9 @@ func (s *orderTimeoutService) cancelOne(ctx context.Context, orderID int64, now 
 		if err := repo.MarkOrderCancelled(ctx, order.ID, now); err != nil {
 			return err
 		}
+		if err := repo.ReleaseOrderCoupon(ctx, order); err != nil {
+			return err
+		}
 		if err := repo.CreateInventoryLogs(ctx, inventoryLogs); err != nil {
 			return err
 		}

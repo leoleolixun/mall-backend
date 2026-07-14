@@ -20,6 +20,7 @@ type OrderTimeoutRepository interface {
 	CreateInventoryLogs(ctx context.Context, logs []model.InventoryLog) error
 	ClosePendingPayments(ctx context.Context, orderID int64, closedAt time.Time) error
 	MarkOrderCancelled(ctx context.Context, orderID int64, cancelledAt time.Time) error
+	ReleaseOrderCoupon(ctx context.Context, order *model.Order) error
 }
 
 type orderTimeoutRepository struct {
@@ -134,4 +135,21 @@ func (r *orderTimeoutRepository) MarkOrderCancelled(ctx context.Context, orderID
 		return fmt.Errorf("订单状态已变更")
 	}
 	return nil
+}
+
+func (r *orderTimeoutRepository) ReleaseOrderCoupon(ctx context.Context, order *model.Order) error {
+	if order.UserCouponID <= 0 {
+		return nil
+	}
+	var userCoupon model.UserCoupon
+	if err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ? AND order_id = ?", order.UserCouponID, order.UserID, order.ID).First(&userCoupon).Error; err != nil {
+		return err
+	}
+	if userCoupon.Status != model.UserCouponStatusUsed {
+		return nil
+	}
+	if err := r.db.WithContext(ctx).Model(&userCoupon).Updates(map[string]interface{}{"status": model.UserCouponStatusUnused, "order_id": 0, "used_at": nil}).Error; err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Model(&model.Coupon{}).Where("id = ?", userCoupon.CouponID).UpdateColumn("used_quantity", gorm.Expr("GREATEST(used_quantity - 1, 0)")).Error
 }

@@ -103,6 +103,23 @@ func (r *fakeOrderRepository) ClosePendingPayments(_ context.Context, _ int64, _
 	return nil
 }
 
+func (r *fakeOrderRepository) FindUserCoupon(context.Context, int64, int64) (*model.UserCoupon, error) {
+	return nil, context.Canceled
+}
+func (r *fakeOrderRepository) FindUserCouponForUpdate(context.Context, int64, int64) (*model.UserCoupon, error) {
+	return nil, context.Canceled
+}
+func (r *fakeOrderRepository) FindCoupon(context.Context, int64) (*model.Coupon, error) {
+	return nil, context.Canceled
+}
+func (r *fakeOrderRepository) UseUserCoupon(context.Context, int64, int64, int64, time.Time) error {
+	return nil
+}
+func (r *fakeOrderRepository) ReleaseUserCoupon(context.Context, int64, int64, int64) error {
+	return nil
+}
+func (r *fakeOrderRepository) IncrementCouponUsed(context.Context, int64, int) error { return nil }
+
 type fakeAddressRepository struct {
 	address model.Address
 }
@@ -213,7 +230,7 @@ func newOrderServiceForTest(t *testing.T) (*orderService, *fakeOrderRepository, 
 	return service, orderRepo, redisServer
 }
 
-func TestOrderCreateAcceptsMissingPreviewTokenAndIsIdempotent(t *testing.T) {
+func TestOrderCreateUsesPreviewTokenAndIsIdempotent(t *testing.T) {
 	service, orderRepo, redisServer := newOrderServiceForTest(t)
 	ctx := context.Background()
 	req := dto.CreateOrderRequest{
@@ -224,6 +241,7 @@ func TestOrderCreateAcceptsMissingPreviewTokenAndIsIdempotent(t *testing.T) {
 			{SKUID: 3, Quantity: 3},
 		},
 	}
+	redisServer.Set(orderIdempotencyKey(7, req.IdempotencyToken), orderPreviewFingerprint(req.AddressID, req.UserCouponID, req.Items))
 
 	created, err := service.Create(ctx, 7, req)
 	if err != nil {
@@ -261,13 +279,25 @@ func TestOrderCreateAcceptsPreviewToken(t *testing.T) {
 		IdempotencyToken: "preview-token",
 		Items:            []dto.OrderRequestItem{{SKUID: 3, Quantity: 1}},
 	}
-	redisServer.Set(orderIdempotencyKey(7, req.IdempotencyToken), "pending")
+	redisServer.Set(orderIdempotencyKey(7, req.IdempotencyToken), orderPreviewFingerprint(req.AddressID, req.UserCouponID, req.Items))
 
 	if _, err := service.Create(context.Background(), 7, req); err != nil {
 		t.Fatalf("create with preview token returned error: %v", err)
 	}
 	if orderRepo.createCalls != 1 {
 		t.Fatalf("expected one order insert, got %d", orderRepo.createCalls)
+	}
+}
+
+func TestOrderCreateRejectsChangedPreviewContent(t *testing.T) {
+	service, orderRepo, redisServer := newOrderServiceForTest(t)
+	req := dto.CreateOrderRequest{AddressID: 4, IdempotencyToken: "changed-token", Items: []dto.OrderRequestItem{{SKUID: 3, Quantity: 1}}}
+	redisServer.Set(orderIdempotencyKey(7, req.IdempotencyToken), orderPreviewFingerprint(req.AddressID, 0, []dto.OrderRequestItem{{SKUID: 3, Quantity: 2}}))
+	if _, err := service.Create(context.Background(), 7, req); err == nil || !strings.Contains(err.Error(), "重新预览") {
+		t.Fatalf("expected preview mismatch, got %v", err)
+	}
+	if orderRepo.createCalls != 0 {
+		t.Fatalf("mismatched preview created %d orders", orderRepo.createCalls)
 	}
 }
 

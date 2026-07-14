@@ -264,6 +264,8 @@ func paymentStatusText(status int) string {
 		return "支付失败"
 	case model.PaymentStatusRefunded:
 		return "已退款"
+	case model.PaymentStatusPartiallyRefunded:
+		return "部分退款"
 	default:
 		return "未知状态"
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 func TestMerchantAccessToken(t *testing.T) {
-	token, err := GenerateMerchantAccessToken(11, 3, "owner", "merchant-secret", time.Hour)
+	token, err := GenerateMerchantAccessToken(11, 3, "owner", 2, "merchant-secret", time.Hour)
 	if err != nil {
 		t.Fatalf("generate merchant token: %v", err)
 	}
@@ -15,7 +15,7 @@ func TestMerchantAccessToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse merchant token: %v", err)
 	}
-	if claims.AccountID != 11 || claims.MerchantID != 3 || claims.Role != "owner" || claims.TokenType != TokenTypeMerchant {
+	if claims.AccountID != 11 || claims.MerchantID != 3 || claims.Role != "owner" || claims.SessionVersion != 2 || claims.TokenType != TokenTypeMerchant {
 		t.Fatalf("unexpected merchant claims: %+v", claims)
 	}
 }
@@ -31,7 +31,7 @@ func TestMerchantAccessTokenRejectsBuyerToken(t *testing.T) {
 }
 
 func TestMerchantAccessTokenRejectsWrongSecret(t *testing.T) {
-	token, err := GenerateMerchantAccessToken(11, 3, "owner", "merchant-secret", time.Hour)
+	token, err := GenerateMerchantAccessToken(11, 3, "owner", 0, "merchant-secret", time.Hour)
 	if err != nil {
 		t.Fatalf("generate merchant token: %v", err)
 	}

@@ -7,16 +7,19 @@ type MerchantOrderListRequest struct {
 }
 
 type ShipOrderRequest struct {
-	DeliveryType     string `json:"delivery_type"`
-	LogisticsCompany string `json:"logistics_company"`
-	TrackingNo       string `json:"tracking_no"`
+	DeliveryType       string `json:"delivery_type"`
+	LogisticsCompany   string `json:"logistics_company"`
+	TrackingNo         string `json:"tracking_no"`
+	EstimatedArrivalAt string `json:"estimated_arrival_at"`
 }
 
 type ShipmentResponse struct {
-	ID               int64  `json:"id"`
-	OrderID          int64  `json:"order_id"`
-	DeliveryType     string `json:"delivery_type"`
-	LogisticsCompany string `json:"logistics_company"`
-	TrackingNo       string `json:"tracking_no"`
-	ShippedAt        string `json:"shipped_at"`
+	ID                 int64   `json:"id"`
+	OrderID            int64   `json:"order_id"`
+	DeliveryType       string  `json:"delivery_type"`
+	LogisticsCompany   string  `json:"logistics_company"`
+	TrackingNo         string  `json:"tracking_no"`
+	ShippedAt          string  `json:"shipped_at"`
+	EstimatedArrivalAt *string `json:"estimated_arrival_at"`
+	ReceivedAt         *string `json:"received_at"`
 }

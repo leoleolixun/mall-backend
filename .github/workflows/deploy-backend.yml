@@ -46,9 +46,11 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-migrate ./cmd/migrate
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-create-merchant-account ./cmd/create-merchant-account
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-cancel-expired-orders ./cmd/cancel-expired-orders
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-complete-shipped-orders ./cmd/complete-shipped-orders
           cp docs/openapi.yaml release/docs/openapi.yaml
           cp deploy/systemd/go-mall-cancel-expired-orders.* release/deploy/systemd/
-          chmod +x release/bin/go-mall-server release/bin/go-mall-migrate release/bin/go-mall-create-merchant-account release/bin/go-mall-cancel-expired-orders
+          cp deploy/systemd/go-mall-complete-shipped-orders.* release/deploy/systemd/
+          chmod +x release/bin/go-mall-server release/bin/go-mall-migrate release/bin/go-mall-create-merchant-account release/bin/go-mall-cancel-expired-orders release/bin/go-mall-complete-shipped-orders
 
       - name: Package release
         run: |
@@ -93,15 +95,20 @@ jobs:
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-migrate "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-create-merchant-account "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-cancel-expired-orders "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-complete-shipped-orders "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders.new"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-server.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-server"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders"
           $SUDO cp -a /tmp/go-mall-backend-release/docs/. "${{ env.DEPLOY_DIR }}/docs/"
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-cancel-expired-orders.service /etc/systemd/system/go-mall-cancel-expired-orders.service
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-cancel-expired-orders.timer /etc/systemd/system/go-mall-cancel-expired-orders.timer
+          $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-complete-shipped-orders.service /etc/systemd/system/go-mall-complete-shipped-orders.service
+          $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-complete-shipped-orders.timer /etc/systemd/system/go-mall-complete-shipped-orders.timer
           $SUDO systemctl daemon-reload
           $SUDO systemctl enable --now go-mall-cancel-expired-orders.timer
+          $SUDO systemctl enable --now go-mall-complete-shipped-orders.timer
 
           cd "${{ env.DEPLOY_DIR }}"
           $SUDO ./bin/go-mall-migrate

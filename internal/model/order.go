@@ -17,9 +17,9 @@ const (
 type Order struct {
 	ID         int64  `gorm:"primaryKey" json:"id"`
 	OrderNo    string `gorm:"type:varchar(64);not null;uniqueIndex" json:"order_no"`
-	UserID     int64  `gorm:"not null;index" json:"user_id"`
-	MerchantID int64  `gorm:"not null;index" json:"merchant_id"`
-	Status     int    `gorm:"not null;default:1;index;index:idx_orders_status_created_at,priority:1" json:"status"`
+	UserID     int64  `gorm:"not null;index;index:idx_orders_merchant_status_user_paid_at,priority:3" json:"user_id"`
+	MerchantID int64  `gorm:"not null;index;index:idx_orders_merchant_status_user_paid_at,priority:1" json:"merchant_id"`
+	Status     int    `gorm:"not null;default:1;index;index:idx_orders_status_created_at,priority:1;index:idx_orders_merchant_status_user_paid_at,priority:2" json:"status"`
 
 	ReceiverName    string `gorm:"type:varchar(100);not null" json:"receiver_name"`
 	ReceiverPhone   string `gorm:"type:varchar(20);not null" json:"receiver_phone"`
@@ -29,9 +29,10 @@ type Order struct {
 	FreightAmount  int64 `gorm:"not null;default:0" json:"freight_amount"`
 	DiscountAmount int64 `gorm:"not null;default:0" json:"discount_amount"`
 	PayableAmount  int64 `gorm:"not null;default:0" json:"payable_amount"`
+	UserCouponID   int64 `gorm:"index" json:"user_coupon_id"`
 
 	Remark      string         `gorm:"type:varchar(255)" json:"remark"`
-	PaidAt      *time.Time     `json:"paid_at"`
+	PaidAt      *time.Time     `gorm:"index:idx_orders_merchant_status_user_paid_at,priority:4" json:"paid_at"`
 	CancelledAt *time.Time     `json:"cancelled_at"`
 	CompletedAt *time.Time     `json:"completed_at"`
 	CreatedAt   time.Time      `gorm:"index:idx_orders_status_created_at,priority:2" json:"created_at"`

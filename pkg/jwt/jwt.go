@@ -15,10 +15,11 @@ type Claims struct {
 const TokenTypeMerchant = "merchant"
 
 type MerchantClaims struct {
-	AccountID  int64  `json:"account_id"`
-	MerchantID int64  `json:"merchant_id"`
-	Role       string `json:"role"`
-	TokenType  string `json:"token_type"`
+	AccountID      int64  `json:"account_id"`
+	MerchantID     int64  `json:"merchant_id"`
+	Role           string `json:"role"`
+	SessionVersion int64  `json:"session_version"`
+	TokenType      string `json:"token_type"`
 	gojwt.RegisteredClaims
 }
 
@@ -60,6 +61,7 @@ func GenerateMerchantAccessToken(
 	accountID int64,
 	merchantID int64,
 	role string,
+	sessionVersion int64,
 	secret string,
 	ttl time.Duration,
 ) (string, error) {
@@ -67,10 +69,11 @@ func GenerateMerchantAccessToken(
 		return "", fmt.Errorf("商家 JWT 密钥未配置")
 	}
 	claims := MerchantClaims{
-		AccountID:  accountID,
-		MerchantID: merchantID,
-		Role:       role,
-		TokenType:  TokenTypeMerchant,
+		AccountID:      accountID,
+		MerchantID:     merchantID,
+		Role:           role,
+		SessionVersion: sessionVersion,
+		TokenType:      TokenTypeMerchant,
 		RegisteredClaims: gojwt.RegisteredClaims{
 			ExpiresAt: gojwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  gojwt.NewNumericDate(time.Now()),

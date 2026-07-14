@@ -7,7 +7,7 @@ import (
 )
 
 func AutoMigrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&model.Merchant{},
 		&model.MerchantAccount{},
 		&model.Category{},
@@ -21,5 +21,15 @@ func AutoMigrate(db *gorm.DB) error {
 		&model.OrderItem{},
 		&model.Shipment{},
 		&model.Payment{},
-	)
+		&model.AfterSale{},
+		&model.Refund{},
+		&model.Coupon{},
+		&model.UserCoupon{},
+	); err != nil {
+		return err
+	}
+	if db.Migrator().HasIndex(&model.AfterSale{}, "idx_after_sales_active_item") {
+		return db.Migrator().DropIndex(&model.AfterSale{}, "idx_after_sales_active_item")
+	}
+	return nil
 }

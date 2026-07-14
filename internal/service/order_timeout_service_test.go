@@ -63,6 +63,10 @@ func (r *fakeOrderTimeoutRepository) MarkOrderCancelled(_ context.Context, _ int
 	return nil
 }
 
+func (r *fakeOrderTimeoutRepository) ReleaseOrderCoupon(context.Context, *model.Order) error {
+	return nil
+}
+
 type fakePaymentTimeoutCoordinator struct {
 	paid bool
 	err  error

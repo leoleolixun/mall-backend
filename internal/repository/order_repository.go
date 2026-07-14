@@ -8,6 +8,7 @@ import (
 	"go-mall/internal/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type OrderRepository interface {
@@ -28,6 +29,12 @@ type OrderRepository interface {
 	IncreaseSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error)
 	CreateInventoryLogs(ctx context.Context, logs []model.InventoryLog) error
 	ClosePendingPayments(ctx context.Context, orderID int64, closedAt time.Time) error
+	FindUserCoupon(ctx context.Context, id, userID int64) (*model.UserCoupon, error)
+	FindUserCouponForUpdate(ctx context.Context, id, userID int64) (*model.UserCoupon, error)
+	FindCoupon(ctx context.Context, id int64) (*model.Coupon, error)
+	UseUserCoupon(ctx context.Context, id, userID, orderID int64, usedAt time.Time) error
+	ReleaseUserCoupon(ctx context.Context, id, userID, orderID int64) error
+	IncrementCouponUsed(ctx context.Context, couponID int64, delta int) error
 }
 
 type orderRepository struct {
@@ -128,20 +135,53 @@ func (r *orderRepository) FindShipmentByOrderID(ctx context.Context, orderID int
 }
 
 func (r *orderRepository) Complete(ctx context.Context, id int64, userID int64, completedAt time.Time) error {
-	result := r.db.WithContext(ctx).
-		Model(&model.Order{}).
-		Where("id = ? AND user_id = ? AND status = ?", id, userID, model.OrderStatusShipped).
-		Updates(map[string]interface{}{
-			"status":       model.OrderStatusCompleted,
-			"completed_at": completedAt,
-		})
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.Order{}).Where("id = ? AND user_id = ? AND status = ?", id, userID, model.OrderStatusShipped).Updates(map[string]interface{}{"status": model.OrderStatusCompleted, "completed_at": completedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return fmt.Errorf("订单状态已变更")
+		}
+		return tx.Model(&model.Shipment{}).Where("order_id = ? AND received_at IS NULL", id).Update("received_at", &completedAt).Error
+	})
+}
+
+func (r *orderRepository) FindUserCoupon(ctx context.Context, id, userID int64) (*model.UserCoupon, error) {
+	var value model.UserCoupon
+	err := r.db.WithContext(ctx).Where("id = ? AND user_id = ?", id, userID).First(&value).Error
+	return &value, err
+}
+
+func (r *orderRepository) FindUserCouponForUpdate(ctx context.Context, id, userID int64) (*model.UserCoupon, error) {
+	var value model.UserCoupon
+	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", id, userID).First(&value).Error
+	return &value, err
+}
+
+func (r *orderRepository) FindCoupon(ctx context.Context, id int64) (*model.Coupon, error) {
+	var value model.Coupon
+	err := r.db.WithContext(ctx).First(&value, id).Error
+	return &value, err
+}
+
+func (r *orderRepository) UseUserCoupon(ctx context.Context, id, userID, orderID int64, usedAt time.Time) error {
+	result := r.db.WithContext(ctx).Model(&model.UserCoupon{}).Where("id = ? AND user_id = ? AND status = ?", id, userID, model.UserCouponStatusUnused).Updates(map[string]interface{}{"status": model.UserCouponStatusUsed, "order_id": orderID, "used_at": &usedAt})
 	if result.Error != nil {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("订单状态已变更")
+		return fmt.Errorf("优惠券状态已变更")
 	}
 	return nil
+}
+
+func (r *orderRepository) ReleaseUserCoupon(ctx context.Context, id, userID, orderID int64) error {
+	return r.db.WithContext(ctx).Model(&model.UserCoupon{}).Where("id = ? AND user_id = ? AND order_id = ? AND status = ?", id, userID, orderID, model.UserCouponStatusUsed).Updates(map[string]interface{}{"status": model.UserCouponStatusUnused, "order_id": 0, "used_at": nil}).Error
+}
+
+func (r *orderRepository) IncrementCouponUsed(ctx context.Context, couponID int64, delta int) error {
+	return r.db.WithContext(ctx).Model(&model.Coupon{}).Where("id = ?", couponID).UpdateColumn("used_quantity", gorm.Expr("GREATEST(used_quantity + ?, 0)", delta)).Error
 }
 
 func (r *orderRepository) ListByUserID(

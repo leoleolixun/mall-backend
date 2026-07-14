@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,26 @@ func merchantLoginFailKey(username string) string {
 	return fmt.Sprintf("mall:merchant:auth:login_fail:%s", username)
 }
 
+func merchantAccountSessionVersionKey(accountID int64) string {
+	return authorization.MerchantAccountSessionVersionKey(accountID)
+}
+
+func parseMerchantRefreshTokenValue(value string) (int64, int64, error) {
+	parts := strings.SplitN(value, ":", 2)
+	accountID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || accountID <= 0 {
+		return 0, 0, fmt.Errorf("refresh token 数据不合法")
+	}
+	if len(parts) == 1 {
+		return accountID, 0, nil
+	}
+	version, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || version < 0 {
+		return 0, 0, fmt.Errorf("refresh token 数据不合法")
+	}
+	return accountID, version, nil
+}
+
 func toMerchantAccountResponse(account *model.MerchantAccount, merchant *model.Merchant) dto.MerchantAccountResponse {
 	return dto.MerchantAccountResponse{
 		ID:           account.ID,
@@ -83,6 +104,12 @@ func (s *merchantAuthService) buildAuthResponse(
 	account *model.MerchantAccount,
 	merchant *model.Merchant,
 ) (*dto.MerchantAuthResponse, error) {
+	sessionVersion, err := s.redis.Get(ctx, merchantAccountSessionVersionKey(account.ID)).Int64()
+	if err == redis.Nil {
+		sessionVersion = 0
+	} else if err != nil {
+		return nil, err
+	}
 	accessTTL := time.Duration(s.jwtCfg.MerchantAccessTTLMinutes) * time.Minute
 	if accessTTL <= 0 {
 		accessTTL = 2 * time.Hour
@@ -91,6 +118,7 @@ func (s *merchantAuthService) buildAuthResponse(
 		account.ID,
 		account.MerchantID,
 		account.Role,
+		sessionVersion,
 		s.jwtCfg.MerchantAccessSecret,
 		accessTTL,
 	)
@@ -103,7 +131,8 @@ func (s *merchantAuthService) buildAuthResponse(
 		refreshTTL = 7 * 24 * time.Hour
 	}
 	refreshToken := uuid.NewString()
-	if err := s.redis.Set(ctx, merchantRefreshTokenKey(refreshToken), account.ID, refreshTTL).Err(); err != nil {
+	refreshValue := fmt.Sprintf("%d:%d", account.ID, sessionVersion)
+	if err := s.redis.Set(ctx, merchantRefreshTokenKey(refreshToken), refreshValue, refreshTTL).Err(); err != nil {
 		return nil, err
 	}
 
@@ -165,9 +194,23 @@ func (s *merchantAuthService) Refresh(ctx context.Context, refreshToken string) 
 	}
 
 	key := merchantRefreshTokenKey(refreshToken)
-	accountID, err := s.redis.Get(ctx, key).Int64()
+	refreshValue, err := s.redis.Get(ctx, key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("refresh token 无效或已过期")
+	}
+	accountID, tokenVersion, err := parseMerchantRefreshTokenValue(refreshValue)
+	if err != nil {
+		return nil, fmt.Errorf("refresh token 无效或已过期")
+	}
+	currentVersion, err := s.redis.Get(ctx, merchantAccountSessionVersionKey(accountID)).Int64()
+	if err == redis.Nil {
+		currentVersion = 0
+	} else if err != nil {
+		return nil, err
+	}
+	if tokenVersion != currentVersion {
+		_ = s.redis.Del(ctx, key).Err()
+		return nil, fmt.Errorf("refresh token 已失效，请重新登录")
 	}
 	account, err := s.repo.FindByID(ctx, accountID)
 	if err != nil {
@@ -191,14 +234,15 @@ func (s *merchantAuthService) Logout(ctx context.Context, accountID int64, refre
 	}
 
 	key := merchantRefreshTokenKey(refreshToken)
-	storedAccountID, err := s.redis.Get(ctx, key).Int64()
+	refreshValue, err := s.redis.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if storedAccountID != accountID {
+	storedAccountID, _, parseErr := parseMerchantRefreshTokenValue(refreshValue)
+	if parseErr != nil || storedAccountID != accountID {
 		return fmt.Errorf("refresh token 不属于当前商家账号")
 	}
 	return s.redis.Del(ctx, key).Err()

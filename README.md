@@ -178,12 +178,15 @@ unset MERCHANT_ACCOUNT_PASSWORD
 
 | 角色 | 主要权限 |
 | --- | --- |
-| `owner` / `admin` | 全部商家后台权限 |
-| `operator` | 经营概览、订单、发货、商品、库存和上传 |
-| `sales` | 经营概览、订单查看、商品只读 |
+| `owner` | 全部商家后台权限，可管理所有员工角色 |
+| `admin` | 全部业务权限，可管理运营、销售和库管账号，不能管理店主或其他管理员 |
+| `operator` | 经营概览、订单、发货、商品、库存、上传和顾客查看 |
+| `sales` | 经营概览、订单查看、商品只读和顾客查看 |
 | `warehouse` | 订单查看、发货、商品只读、库存查看与调整 |
 
 登录、刷新和 `/api/v1/merchant/me` 会返回 `permissions`。前端使用它控制菜单和按钮；后端权限中间件会对越权请求返回 HTTP `403`。
+
+员工账号支持后台创建、编辑、启停和密码重置。账号被停用、角色被调整或密码被重置后，旧访问令牌和刷新令牌会立即失效；系统会阻止停用当前登录账号以及移除最后一个启用的店主账号。
 
 已实现接口：
 
@@ -192,6 +195,14 @@ POST /api/v1/merchant/auth/login
 POST /api/v1/merchant/auth/refresh
 POST /api/v1/merchant/auth/logout
 GET  /api/v1/merchant/me
+GET  /api/v1/merchant/accounts
+POST /api/v1/merchant/accounts
+PUT  /api/v1/merchant/accounts/{id}
+PUT  /api/v1/merchant/accounts/{id}/password
+GET  /api/v1/merchant/roles
+GET  /api/v1/merchant/customers/overview
+GET  /api/v1/merchant/customers
+GET  /api/v1/merchant/customers/{id}
 POST /api/v1/merchant/uploads
 GET  /api/v1/merchant/orders
 GET  /api/v1/merchant/orders/{id}
@@ -357,6 +368,27 @@ sudo systemctl list-timers go-mall-cancel-expired-orders.timer
 sudo journalctl -u go-mall-cancel-expired-orders.service -n 100 --no-pager
 ```
 
+## 发货订单自动完成
+
+买家可以调用 `POST /api/v1/orders/:id/confirm` 主动确认收货。未主动确认的订单可由独立任务按发货时间自动完成：
+
+```yaml
+order:
+  auto_complete_enabled: false
+  shipped_auto_complete_days: 10
+  complete_batch_size: 100
+```
+
+手动验证和查看定时任务：
+
+```bash
+./bin/go-mall-complete-shipped-orders
+sudo systemctl list-timers go-mall-complete-shipped-orders.timer
+sudo journalctl -u go-mall-complete-shipped-orders.service -n 100 --no-pager
+```
+
+任务只处理仍处于“已发货”的订单，并同时写入订单完成时间和物流签收时间。首次部署保持关闭，验证查询范围后再开启。
+
 ## 数据库迁移
 
 本项目使用 GORM AutoMigrate。生产部署建议显式执行迁移命令：
@@ -391,7 +423,7 @@ CI/CD 中会构建 `go-mall-migrate`，部署时执行：
 ```text
 go test
 go vet
-build server/migrate/create-merchant-account/cancel-expired-orders
+build server/migrate/create-merchant-account/cancel-expired-orders/complete-shipped-orders
 上传服务器
 执行数据库迁移
 重启 systemd 服务

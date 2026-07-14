@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,15 +55,32 @@ func orderIdempotencyKey(userID int64, token string) string {
 const acquireOrderIdempotencyScript = `
 local value = redis.call("GET", KEYS[1])
 if not value then
-	redis.call("SET", KEYS[1], "processing", "EX", ARGV[1])
-	return "accepted"
+	return "missing"
 end
-if value == "pending" then
+if value == ARGV[2] then
 	redis.call("SET", KEYS[1], "processing", "EX", ARGV[1])
 	return "accepted"
 end
 return value
 `
+
+func orderPreviewFingerprint(addressID, userCouponID int64, items []dto.OrderRequestItem) string {
+	quantities := make(map[int64]int)
+	for _, item := range items {
+		quantities[item.SKUID] += item.Quantity
+	}
+	ids := make([]int64, 0, len(quantities))
+	for id := range quantities {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	builder := strings.Builder{}
+	fmt.Fprintf(&builder, "%d|%d", addressID, userCouponID)
+	for _, id := range ids {
+		fmt.Fprintf(&builder, "|%d:%d", id, quantities[id])
+	}
+	return fmt.Sprintf("pending|%x", sha256.Sum256([]byte(builder.String())))
+}
 
 func generateOrderNo() string {
 	return fmt.Sprintf("O%s%s", time.Now().Format("20060102150405"), uuid.NewString()[:8])
@@ -141,6 +160,7 @@ func toOrderResponse(order model.Order, items []model.OrderItem) *dto.OrderRespo
 		FreightAmount:   order.FreightAmount,
 		DiscountAmount:  order.DiscountAmount,
 		PayableAmount:   order.PayableAmount,
+		UserCouponID:    order.UserCouponID,
 		Remark:          order.Remark,
 		PaidAt:          paidAt,
 		CancelledAt:     cancelledAt,
@@ -173,9 +193,13 @@ func (s *orderService) Logistics(ctx context.Context, userID int64, id int64) (*
 	}
 
 	return &dto.LogisticsResponse{
-		OrderID:          order.ID,
-		LogisticsCompany: shipment.LogisticsCompany,
-		TrackingNo:       shipment.TrackingNo,
+		OrderID:            order.ID,
+		DeliveryType:       shipment.DeliveryType,
+		LogisticsCompany:   shipment.LogisticsCompany,
+		TrackingNo:         shipment.TrackingNo,
+		ShippedAt:          shipment.ShippedAt.Format(time.RFC3339),
+		EstimatedArrivalAt: stringTime(shipment.EstimatedArrivalAt),
+		ReceivedAt:         stringTime(shipment.ReceivedAt),
 		Traces: []dto.LogisticsTraceResponse{{
 			Time:    shipment.ShippedAt.Format(time.RFC3339),
 			Content: "商家已发货",
@@ -225,12 +249,13 @@ func normalizeOrderPage(page int, pageSize int) (int, int) {
 	return page, pageSize
 }
 
-func (s *orderService) acquireOrderIdempotencyToken(ctx context.Context, userID int64, token string) (string, error) {
+func (s *orderService) acquireOrderIdempotencyToken(ctx context.Context, userID int64, token, fingerprint string) (string, error) {
 	result, err := s.redisClient.Eval(
 		ctx,
 		acquireOrderIdempotencyScript,
 		[]string{orderIdempotencyKey(userID, token)},
 		int((15 * time.Minute).Seconds()),
+		fingerprint,
 	).Result()
 	if err != nil {
 		return "", fmt.Errorf("订单幂等校验失败，请稍后重试")
@@ -359,22 +384,29 @@ func (s *orderService) Preview(
 		})
 	}
 
-	// 生成幂等 token
-	idempotencyToken := uuid.NewString()
-
-	if err := s.redisClient.Set(
-		ctx,
-		orderIdempotencyKey(userID, idempotencyToken),
-		"pending",
-		15*time.Minute,
-	).Err(); err != nil {
-		return nil, err
-	}
-
 	// 返回预览结果
 	freightAmount := int64(0)
 	discountAmount := int64(0)
+	if req.UserCouponID > 0 {
+		userCoupon, err := s.orderRepo.FindUserCoupon(ctx, req.UserCouponID, userID)
+		if err != nil || userCoupon.Status != model.UserCouponStatusUnused {
+			return nil, fmt.Errorf("用户优惠券不可用")
+		}
+		coupon, err := s.orderRepo.FindCoupon(ctx, userCoupon.CouponID)
+		now := time.Now()
+		if err != nil || coupon.MerchantID != defaultMerchantID || coupon.Status != model.CouponStatusActive || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
+			return nil, fmt.Errorf("优惠券不满足使用条件")
+		}
+		discountAmount = coupon.DiscountAmount
+		if discountAmount > goodsAmount {
+			discountAmount = goodsAmount
+		}
+	}
 	payableAmount := goodsAmount + freightAmount - discountAmount
+	idempotencyToken := uuid.NewString()
+	if err := s.redisClient.Set(ctx, orderIdempotencyKey(userID, idempotencyToken), orderPreviewFingerprint(req.AddressID, req.UserCouponID, req.Items), 15*time.Minute).Err(); err != nil {
+		return nil, err
+	}
 
 	return &dto.OrderPreviewResponse{
 		IdempotencyToken: idempotencyToken,
@@ -395,6 +427,7 @@ func (s *orderService) Preview(
 		FreightAmount:  freightAmount,
 		DiscountAmount: discountAmount,
 		PayableAmount:  payableAmount,
+		UserCouponID:   req.UserCouponID,
 	}, nil
 }
 
@@ -438,7 +471,7 @@ func (s *orderService) Create(
 	}
 
 	tokenKey := orderIdempotencyKey(userID, req.IdempotencyToken)
-	tokenState, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken)
+	tokenState, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken, orderPreviewFingerprint(req.AddressID, req.UserCouponID, req.Items))
 	if err != nil {
 		return nil, err
 	}
@@ -449,6 +482,12 @@ func (s *orderService) Create(
 			if parseErr == nil && orderID > 0 {
 				return s.Detail(ctx, userID, orderID)
 			}
+		}
+		if tokenState == "missing" {
+			return nil, fmt.Errorf("订单预览已过期，请重新预览")
+		}
+		if strings.HasPrefix(tokenState, "pending|") {
+			return nil, fmt.Errorf("订单内容已变化，请重新预览")
 		}
 		return nil, fmt.Errorf("订单正在处理，请勿重复提交")
 	}
@@ -560,10 +599,30 @@ func (s *orderService) Create(
 			})
 		}
 
+		discountAmount := int64(0)
+		var usedCoupon *model.UserCoupon
+		if req.UserCouponID > 0 {
+			userCoupon, err := repo.FindUserCouponForUpdate(ctx, req.UserCouponID, userID)
+			if err != nil || userCoupon.Status != model.UserCouponStatusUnused {
+				return fmt.Errorf("用户优惠券不可用")
+			}
+			coupon, err := repo.FindCoupon(ctx, userCoupon.CouponID)
+			now := time.Now()
+			if err != nil || coupon.MerchantID != defaultMerchantID || coupon.Status != model.CouponStatusActive || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
+				return fmt.Errorf("优惠券不满足使用条件")
+			}
+			discountAmount = coupon.DiscountAmount
+			if discountAmount > goodsAmount {
+				discountAmount = goodsAmount
+			}
+			usedCoupon = userCoupon
+		}
+
 		order.GoodsAmount = goodsAmount
 		order.FreightAmount = 0
-		order.DiscountAmount = 0
-		order.PayableAmount = goodsAmount
+		order.DiscountAmount = discountAmount
+		order.PayableAmount = goodsAmount - discountAmount
+		order.UserCouponID = req.UserCouponID
 
 		if err := repo.Create(ctx, order); err != nil {
 			return err
@@ -575,6 +634,15 @@ func (s *orderService) Create(
 
 		if err := repo.CreateItems(ctx, items); err != nil {
 			return err
+		}
+		if usedCoupon != nil {
+			now := time.Now()
+			if err := repo.UseUserCoupon(ctx, usedCoupon.ID, userID, order.ID, now); err != nil {
+				return err
+			}
+			if err := repo.IncrementCouponUsed(ctx, usedCoupon.CouponID, 1); err != nil {
+				return err
+			}
 		}
 		for i := range inventoryLogs {
 			inventoryLogs[i].ReferenceID = order.ID
@@ -724,6 +792,18 @@ func (s *orderService) Cancel(ctx context.Context, userID int64, id int64) error
 				OperatorID:    userID,
 				Remark:        "用户取消订单恢复库存",
 			})
+		}
+		if order.UserCouponID > 0 {
+			userCoupon, err := repo.FindUserCouponForUpdate(ctx, order.UserCouponID, userID)
+			if err != nil {
+				return err
+			}
+			if err := repo.ReleaseUserCoupon(ctx, userCoupon.ID, userID, order.ID); err != nil {
+				return err
+			}
+			if err := repo.IncrementCouponUsed(ctx, userCoupon.CouponID, -1); err != nil {
+				return err
+			}
 		}
 		return repo.CreateInventoryLogs(ctx, inventoryLogs)
 	})

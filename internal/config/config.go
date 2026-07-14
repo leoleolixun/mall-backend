@@ -18,6 +18,9 @@ type OrderConfig struct {
 	CancelExpiredEnabled         bool `mapstructure:"cancel_expired_enabled"`
 	PendingPaymentTimeoutMinutes int  `mapstructure:"pending_payment_timeout_minutes"`
 	CancelBatchSize              int  `mapstructure:"cancel_batch_size"`
+	AutoCompleteEnabled          bool `mapstructure:"auto_complete_enabled"`
+	ShippedAutoCompleteDays      int  `mapstructure:"shipped_auto_complete_days"`
+	CompleteBatchSize            int  `mapstructure:"complete_batch_size"`
 }
 
 type AppConfig struct {
@@ -134,6 +137,9 @@ func Load(path string) (*Config, error) {
 	v.SetDefault("order.pending_payment_timeout_minutes", 15)
 	v.SetDefault("order.cancel_batch_size", 100)
 	v.SetDefault("order.cancel_expired_enabled", false)
+	v.SetDefault("order.auto_complete_enabled", false)
+	v.SetDefault("order.shipped_auto_complete_days", 10)
+	v.SetDefault("order.complete_batch_size", 100)
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err

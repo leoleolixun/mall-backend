@@ -6,12 +6,14 @@ type OrderRequestItem struct {
 }
 
 type OrderPreviewRequest struct {
-	AddressID int64              `json:"address_id"`
-	Items     []OrderRequestItem `json:"items"`
+	AddressID    int64              `json:"address_id"`
+	UserCouponID int64              `json:"user_coupon_id"`
+	Items        []OrderRequestItem `json:"items"`
 }
 
 type CreateOrderRequest struct {
 	AddressID        int64              `json:"address_id"`
+	UserCouponID     int64              `json:"user_coupon_id"`
 	Remark           string             `json:"remark"`
 	IdempotencyToken string             `json:"idempotency_token"`
 	Items            []OrderRequestItem `json:"items"`
@@ -45,6 +47,7 @@ type OrderPreviewResponse struct {
 	FreightAmount    int64               `json:"freight_amount"`
 	DiscountAmount   int64               `json:"discount_amount"`
 	PayableAmount    int64               `json:"payable_amount"`
+	UserCouponID     int64               `json:"user_coupon_id"`
 }
 
 type OrderResponse struct {
@@ -62,6 +65,7 @@ type OrderResponse struct {
 	FreightAmount   int64               `json:"freight_amount"`
 	DiscountAmount  int64               `json:"discount_amount"`
 	PayableAmount   int64               `json:"payable_amount"`
+	UserCouponID    int64               `json:"user_coupon_id"`
 	Remark          string              `json:"remark"`
 	PaidAt          *string             `json:"paid_at"`
 	CancelledAt     *string             `json:"cancelled_at"`
@@ -78,8 +82,12 @@ type LogisticsTraceResponse struct {
 }
 
 type LogisticsResponse struct {
-	OrderID          int64                    `json:"order_id"`
-	LogisticsCompany string                   `json:"logistics_company"`
-	TrackingNo       string                   `json:"tracking_no"`
-	Traces           []LogisticsTraceResponse `json:"traces"`
+	OrderID            int64                    `json:"order_id"`
+	DeliveryType       string                   `json:"delivery_type"`
+	LogisticsCompany   string                   `json:"logistics_company"`
+	TrackingNo         string                   `json:"tracking_no"`
+	ShippedAt          string                   `json:"shipped_at"`
+	EstimatedArrivalAt *string                  `json:"estimated_arrival_at"`
+	ReceivedAt         *string                  `json:"received_at"`
+	Traces             []LogisticsTraceResponse `json:"traces"`
 }
