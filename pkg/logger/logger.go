@@ -1,6 +1,9 @@
 package logger
 
 import (
+	"fmt"
+	"strings"
+
 	"go-mall/internal/config"
 
 	"go.uber.org/zap"
@@ -8,21 +11,22 @@ import (
 )
 
 func New(cfg config.LogConfig) (*zap.Logger, error) {
-	level := zapcore.DebugLevel
-
-	switch cfg.Level {
-	case "debug":
-		level = zapcore.DebugLevel
-	case "info":
-		level = zapcore.InfoLevel
-	case "warn":
-		level = zapcore.WarnLevel
-	case "error":
-		level = zapcore.ErrorLevel
+	level := zapcore.InfoLevel
+	if value := strings.TrimSpace(cfg.Level); value != "" {
+		if err := level.Set(value); err != nil {
+			return nil, fmt.Errorf("无效日志级别 %q: %w", value, err)
+		}
 	}
 
-	zapCfg := zap.NewDevelopmentConfig()
+	var zapCfg zap.Config
+	if strings.EqualFold(strings.TrimSpace(cfg.Format), "console") {
+		zapCfg = zap.NewDevelopmentConfig()
+	} else {
+		zapCfg = zap.NewProductionConfig()
+	}
 	zapCfg.Level = zap.NewAtomicLevelAt(level)
+	zapCfg.OutputPaths = []string{"stdout"}
+	zapCfg.ErrorOutputPaths = []string{"stderr"}
 
 	return zapCfg.Build()
 }

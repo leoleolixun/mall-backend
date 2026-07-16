@@ -6,6 +6,11 @@ set -euo pipefail
 : "${MERCHANT_USERNAME:?set MERCHANT_USERNAME}"
 : "${MERCHANT_PASSWORD:?set MERCHANT_PASSWORD}"
 
+if [[ "${ALLOW_TEST_MUTATIONS:-}" != "1" ]]; then
+  echo "refusing to mutate data: set ALLOW_TEST_MUTATIONS=1 only in an isolated test environment" >&2
+  exit 1
+fi
+
 for command in curl jq; do
   if ! command -v "$command" >/dev/null 2>&1; then
     echo "missing required command: $command" >&2

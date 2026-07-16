@@ -3,10 +3,11 @@ info:
   title: go-mall API
   version: 0.1.0
   description: |
-    go-mall 单商户商城 MVP 接口文档。
+    go-mall 多商户商城接口文档。旧订单接口继续兼容单商户客户端，新的跨商户结算使用 Trade 接口。
 
     当前文档作为后端、小程序前端、网页前端共同使用的接口契约。
     金额字段统一使用分，避免浮点数精度问题。
+    每个 HTTP 响应都包含 X-Request-ID；客户端应在报错时保留该值用于日志追踪。
 
     标注为“规划接口，后端尚未实现”的接口用于前端 Mock 和后续后端开发排期。
 servers:
@@ -36,7 +37,9 @@ tags:
   - name: Cart
     description: 购物车
   - name: Order
-    description: 订单与模拟支付
+    description: 订单与支付
+  - name: Trade
+    description: 多商户交易预览、拆单、查询与整笔取消
   - name: Payment
     description: 支付与支付回调
   - name: AfterSale
@@ -113,6 +116,8 @@ paths:
                         type: array
                         items:
                           $ref: "#/components/schemas/Category"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/products:
     get:
@@ -145,6 +150,14 @@ paths:
             type: integer
             format: int64
           description: 分类 ID
+        - name: merchant_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+          description: 商户 ID；不传时返回全部启用商户的在售商品
         - name: keyword
           in: query
           required: false
@@ -188,8 +201,8 @@ paths:
                         $ref: "#/components/schemas/ProductDetail"
         "400":
           $ref: "#/components/responses/BadRequest"
-        "500":
-          $ref: "#/components/responses/InternalError"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/products/{id}/skus:
     get:
@@ -215,6 +228,8 @@ paths:
                           $ref: "#/components/schemas/SKU"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/auth/register:
     post:
@@ -242,6 +257,10 @@ paths:
                         $ref: "#/components/schemas/AuthResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/auth/login/password:
     post:
@@ -269,12 +288,18 @@ paths:
                         $ref: "#/components/schemas/AuthResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/auth/login/wechat:
     post:
       tags:
         - Auth
-      summary: 微信小程序登录
+      summary: 微信小程序 open_id 联调登录（仅本地开发）
+      description: 不安全的临时联调接口，仅当 debug 模式且 auth.unsafe_wechat_open_id_login_enabled=true 时注册。生产环境不会注册；正式接入必须由小程序提交 wx.login code，再由服务端调用 code2session。
+      deprecated: true
       operationId: wechatMiniProgramLogin
       requestBody:
         required: true
@@ -296,6 +321,10 @@ paths:
                         $ref: "#/components/schemas/AuthResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/auth/refresh:
     post:
@@ -323,6 +352,10 @@ paths:
                         $ref: "#/components/schemas/AuthResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/auth/logout:
     post:
@@ -429,12 +462,50 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/merchants:
+    get:
+      tags:
+        - Merchant
+      summary: 公开商户列表
+      description: 已实现。仅返回启用商户，按商户 ID 升序分页。
+      operationId: listPublicMerchants
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 20
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/PublicMerchantPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
   /api/v1/merchants/{id}:
     get:
       tags:
         - Merchant
       summary: 商户公开信息
-      description: 规划接口，后端尚未实现。多商户前台店铺页使用。
+      description: 已实现。停用或不存在的商户统一返回 404。
       operationId: getMerchant
       parameters:
         - $ref: "#/components/parameters/MerchantID"
@@ -449,16 +520,46 @@ paths:
                   - type: object
                     properties:
                       data:
-                        $ref: "#/components/schemas/MerchantProfile"
+                        $ref: "#/components/schemas/PublicMerchant"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/merchants/{id}/categories:
+    get:
+      tags:
+        - Merchant
+      summary: 商户公开分类列表
+      description: 已实现。仅返回启用商户的启用分类。
+      operationId: listMerchantPublicCategories
+      parameters:
+        - $ref: "#/components/parameters/MerchantID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Category"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/merchants/{id}/products:
     get:
       tags:
         - Merchant
       summary: 商户商品列表
-      description: 规划接口，后端尚未实现。用于多商户店铺页。
+      description: 已实现。仅返回启用商户的在售商品。
       operationId: listMerchantPublicProducts
       parameters:
         - $ref: "#/components/parameters/MerchantID"
@@ -482,6 +583,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: category_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
       responses:
         "200":
           description: 查询成功
@@ -496,13 +604,15 @@ paths:
                         $ref: "#/components/schemas/ProductPage"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /api/v1/favorites/products:
     get:
       tags:
         - Favorite
       summary: 收藏商品列表
-      description: 规划接口，后端尚未实现。
+      description: 已实现。仅返回当前用户收藏且仍在售的商品，按收藏时间倒序分页。
       operationId: listFavoriteProducts
       security:
         - bearerAuth: []
@@ -540,7 +650,7 @@ paths:
       tags:
         - Favorite
       summary: 收藏商品
-      description: 规划接口，后端尚未实现。
+      description: 已实现。重复收藏按幂等成功处理，已下架或不存在的商品不能收藏。
       operationId: createFavoriteProduct
       security:
         - bearerAuth: []
@@ -563,7 +673,7 @@ paths:
       tags:
         - Favorite
       summary: 取消收藏商品
-      description: 规划接口，后端尚未实现。
+      description: 已实现。重复取消按幂等成功处理。
       operationId: deleteFavoriteProduct
       security:
         - bearerAuth: []
@@ -582,10 +692,20 @@ paths:
       tags:
         - Coupon
       summary: 可领取优惠券列表
-      description: 已实现。返回默认商户当前有效且仍有库存的优惠券，并标识当前用户是否达到领取上限。
+      description: 已实现。返回指定商户当前有效且仍有库存的优惠券，并标识当前用户是否达到领取上限；不传 merchant_id 时兼容默认商户 1。
       operationId: listCoupons
       security:
         - bearerAuth: []
+      parameters:
+        - name: merchant_id
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+            default: 1
+          description: 商户 ID
       responses:
         "200":
           description: 查询成功
@@ -606,7 +726,7 @@ paths:
       tags:
         - Coupon
       summary: 领取优惠券
-      description: 已实现。使用数据库行锁校验发行量和每人限领数量，避免并发超发。
+      description: 已实现。按优惠券所属商户校验商户启用状态，并使用数据库行锁校验发行量和每人限领数量，避免并发超发。
       operationId: claimCoupon
       security:
         - bearerAuth: []
@@ -879,12 +999,180 @@ paths:
         "401":
           $ref: "#/components/responses/Unauthorized"
 
+  /api/v1/trades/preview:
+    post:
+      tags:
+        - Trade
+      summary: 多商户交易预览
+      description: 校验地址、商户、商品、SKU、库存和商户券，按商户分组计算优惠及应付金额，并返回一次性预览令牌。M8 不支持平台券。
+      operationId: previewTrade
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TradePreviewRequest"
+      responses:
+        "200":
+          description: 预览成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TradePreview"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/trades:
+    get:
+      tags:
+        - Trade
+      summary: 当前用户交易列表
+      operationId: listTrades
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/TradeStatus"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TradePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags:
+        - Trade
+      summary: 原子创建多商户交易
+      description: 使用最新预览令牌，在一个 MySQL 事务中生成一张交易单和每商户一张子订单，同时扣减库存、核销商户券并写库存流水；任一分组失败时整体回滚。
+      operationId: createTrade
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTradeRequest"
+      responses:
+        "200":
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Trade"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /api/v1/trades/{id}:
+    get:
+      tags:
+        - Trade
+      summary: 当前用户交易详情
+      operationId: getTradeDetail
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TradeID"
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Trade"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/trades/{id}/cancel:
+    post:
+      tags:
+        - Trade
+      summary: 整笔取消待支付交易
+      description: 只允许取消待支付交易；在同一事务中关闭全部子订单和待支付单、恢复全部库存并释放商户券。重复取消按幂等成功返回交易详情。
+      operationId: cancelTrade
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/TradeID"
+      responses:
+        "200":
+          description: 取消成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/Trade"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
   /api/v1/orders/preview:
     post:
       tags:
         - Order
       summary: 订单预览
-      description: 规划接口，后端尚未实现。用于前端订单确认页 Mock 和后续后端实现。
+      description: 兼容旧单商户客户端，内部使用 Trade 预览；只允许默认商户商品。新客户端应使用 POST /api/v1/trades/preview。
       operationId: previewOrder
       security:
         - bearerAuth: []
@@ -910,6 +1198,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/orders:
     get:
@@ -962,7 +1252,7 @@ paths:
       tags:
         - Order
       summary: 创建订单
-      description: 根据订单预览生成的幂等 token 创建订单，第一版从购物车选择 SKU 创建订单。
+      description: 兼容旧单商户客户端，内部创建一张单商户交易和一张子订单；只允许默认商户商品。新客户端应使用 POST /api/v1/trades。
       operationId: createOrder
       security:
         - bearerAuth: []
@@ -988,6 +1278,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/orders/{id}:
     get:
@@ -1035,13 +1327,16 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "409":
+          $ref: "#/components/responses/Conflict"
 
   /api/v1/orders/{id}/pay:
     post:
       tags:
         - Order
-      summary: 模拟支付订单
-      description: 第一版只做模拟支付，不接真实微信支付；接口会创建一条 mock 支付单并更新订单为已支付。
+      summary: 旧版模拟支付订单（仅本地开发）
+      description: 仅当 payment.mock_enabled=true 时注册，用于本地联调。生产环境应使用 POST /api/v1/payments 创建真实支付单。
+      deprecated: true
       operationId: payOrder
       security:
         - bearerAuth: []
@@ -1131,7 +1426,10 @@ paths:
       tags:
         - Payment
       summary: 创建支付单
-      description: 为待支付订单创建支付单。mock 返回模拟参数；alipay/page 返回支付宝 PC 网页支付跳转链接；alipay/wap 为 H5 支付预留。
+      description: |
+        `order_id` 和 `trade_id` 必须且只能填写一个。旧单商户订单可继续使用 `order_id`；M8 交易必须使用 `trade_id`，后端会在同一事务内按每张商户子订单创建不可变支付分配。
+        同一订单或交易同一时刻只允许一个待支付支付单；使用相同渠道和场景重复请求时返回原支付单，切换渠道或场景时拒绝创建，待原支付单关闭后才能重新选择。交易子订单不能单独创建支付单。
+        mock 返回模拟参数；alipay/page 返回支付宝 PC 网页支付跳转链接；alipay/wap 为 H5 支付预留。
       operationId: createPayment
       security:
         - bearerAuth: []
@@ -1163,7 +1461,7 @@ paths:
       tags:
         - Payment
       summary: 支付宝支付异步通知
-      description: 支付宝服务器回调接口，不使用用户 JWT。后端会验签、校验金额，并把支付单和订单更新为已支付。该接口按支付宝要求返回纯文本 success 或 fail。
+      description: 支付宝服务器回调接口，不使用用户 JWT。后端会验签、校验金额；交易支付会在一个事务中把支付单、交易单和全部商户子订单更新为已支付，旧订单支付继续更新单张订单。该接口按支付宝要求返回纯文本 success 或 fail。
       operationId: alipayPaymentNotify
       requestBody:
         required: true
@@ -1216,8 +1514,9 @@ paths:
     post:
       tags:
         - Payment
-      summary: 模拟完成支付
-      description: 第一版联调用接口，用于把待支付支付单模拟更新为已支付，并同步更新订单为已支付。
+      summary: 模拟完成支付（仅本地开发）
+      description: 仅当 payment.mock_enabled=true 时注册，用于本地联调；生产环境必须保持关闭。
+      deprecated: true
       operationId: mockCompletePayment
       security:
         - bearerAuth: []
@@ -1490,6 +1789,10 @@ paths:
                         $ref: "#/components/schemas/MerchantAuthResult"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/merchant/auth/refresh:
     post:
@@ -1517,6 +1820,10 @@ paths:
                         $ref: "#/components/schemas/MerchantAuthResult"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "503":
+          $ref: "#/components/responses/RateLimitUnavailable"
 
   /api/v1/merchant/auth/logout:
     post:
@@ -2466,7 +2773,7 @@ paths:
       tags:
         - MerchantAdmin
       summary: 商家同意售后
-      description: 已实现。创建独立退款单并原路退款；mock 立即成功，支付宝调用 alipay.trade.refund，失败状态可重试，微信退款尚未接入。
+      description: 已实现。创建独立退款单并原路退款；mock 立即成功，支付宝调用 alipay.trade.refund。渠道超时或结果不明确时保持“退款结果确认中”，不会直接标记失败；后端会使用同一退款请求号主动查询和幂等重试。微信退款尚未接入。
       operationId: approveMerchantAfterSale
       security:
         - merchantBearerAuth: []
@@ -2475,6 +2782,34 @@ paths:
       responses:
         "200":
           description: 处理成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/AfterSale"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/merchant/after-sales/{id}/refund/sync:
+    post:
+      tags:
+        - MerchantAdmin
+      summary: 主动同步退款结果
+      description: 查询当前售后的原退款单。支付宝退款不存在时使用相同 refund_no 作为 out_request_no 幂等重试；明确成功或失败时更新退款单、售后单和支付单状态。
+      operationId: syncMerchantAfterSaleRefund
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/AfterSaleID"
+      responses:
+        "200":
+          description: 同步完成；结果仍不确定时返回最新的处理中状态
           content:
             application/json:
               schema:
@@ -2711,6 +3046,137 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /api/v1/merchant/settlement-entries:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家结算流水列表
+      description: 已实现。仅店主和管理员可查询当前 Merchant JWT 所属商户的销售、佣金、退款及佣金冲正流水；流水金额不可修改。
+      operationId: listMerchantSettlementEntries
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: entry_type
+          in: query
+          schema:
+            type: string
+            enum: [sale, commission, refund, commission_refund, adjustment]
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SettlementEntryPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/settlements:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家结算单列表
+      description: 已实现。仅店主和管理员可只读查询当前商户的周期结算单。
+      operationId: listMerchantSettlements
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+        - name: status
+          in: query
+          schema:
+            type: integer
+            enum: [1, 2, 3]
+            description: 1 待确认，2 已确认，3 已打款
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantSettlementPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/v1/merchant/settlements/{id}:
+    get:
+      tags:
+        - MerchantAdmin
+      summary: 商家结算单详情
+      description: 已实现。返回当前商户结算单及其不可变流水，跨商户 ID 返回不存在。
+      operationId: getMerchantSettlement
+      security:
+        - merchantBearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+      responses:
+        "200":
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessResponse"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/MerchantSettlement"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
   /api/v1/merchant/orders:
     get:
       tags:
@@ -2741,6 +3207,13 @@ paths:
           required: false
           schema:
             $ref: "#/components/schemas/OrderStatus"
+        - name: keyword
+          in: query
+          required: false
+          description: 按订单号、收货人或收货手机号模糊搜索，最多 100 个字符。
+          schema:
+            type: string
+            maxLength: 100
       responses:
         "200":
           description: 查询成功
@@ -2755,6 +3228,10 @@ paths:
                         $ref: "#/components/schemas/OrderPage"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "500":
           $ref: "#/components/responses/InternalError"
 
@@ -3259,6 +3736,15 @@ components:
         format: int64
         minimum: 1
       description: 订单 ID
+    TradeID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
+      description: 交易 ID
     CouponID:
       name: id
       in: path
@@ -3288,12 +3774,18 @@ components:
   responses:
     SuccessEmpty:
       description: 操作成功
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/SuccessResponse"
     BadRequest:
       description: 参数错误或业务校验失败
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
       content:
         application/json:
           schema:
@@ -3303,6 +3795,9 @@ components:
             message: 参数错误
     Unauthorized:
       description: 未登录或 token 无效
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
       content:
         application/json:
           schema:
@@ -3312,6 +3807,9 @@ components:
             message: 未登录
     Forbidden:
       description: 当前商家角色没有接口权限
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
       content:
         application/json:
           schema:
@@ -3319,8 +3817,35 @@ components:
           example:
             code: 40300
             message: 当前角色无权执行此操作
+    NotFound:
+      description: 资源不存在或当前不可公开访问
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 40400
+            message: 资源不存在
+    Conflict:
+      description: 幂等请求正在处理、预览已失效或资源状态冲突
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 40900
+            message: 请重新预览交易
     InternalError:
       description: 服务内部错误
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
       content:
         application/json:
           schema:
@@ -3328,6 +3853,51 @@ components:
           example:
             code: 50000
             message: 服务内部错误
+
+    TooManyRequests:
+      description: 认证接口按客户端 IP 限流
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+        Retry-After:
+          description: 建议等待秒数
+          schema:
+            type: integer
+        X-RateLimit-Limit:
+          description: 当前时间窗口允许的请求数
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: 当前时间窗口剩余请求数
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 42900
+            message: 请求过于频繁，请稍后再试
+
+    RateLimitUnavailable:
+      description: Redis 不可用，认证限流暂时无法执行
+      headers:
+        X-Request-ID:
+          $ref: "#/components/headers/RequestID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            code: 50000
+            message: 认证限流服务暂不可用
+
+  headers:
+    RequestID:
+      description: 当前请求的 UUID，可用于关联服务端结构化日志
+      schema:
+        type: string
+        format: uuid
 
   schemas:
     SuccessResponse:
@@ -3375,6 +3945,8 @@ components:
       type: object
       required:
         - id
+        - merchant_id
+        - parent_id
         - name
         - sort
       properties:
@@ -3382,6 +3954,15 @@ components:
           type: integer
           format: int64
           example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+        parent_id:
+          type: integer
+          format: int64
+          description: 顶级分类为 0
+          example: 0
         name:
           type: string
           example: 手机数码
@@ -3394,6 +3975,8 @@ components:
       required:
         - id
         - merchant_id
+        - merchant_name
+        - merchant_logo
         - category_id
         - name
         - cover
@@ -3407,6 +3990,12 @@ components:
           type: integer
           format: int64
           example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        merchant_logo:
+          type: string
+          example: https://example.com/merchant-logo.jpg
         category_id:
           type: integer
           format: int64
@@ -3451,6 +4040,8 @@ components:
       required:
         - id
         - merchant_id
+        - merchant_name
+        - merchant_logo
         - category_id
         - name
         - cover
@@ -3465,6 +4056,12 @@ components:
           type: integer
           format: int64
           example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        merchant_logo:
+          type: string
+          example: https://example.com/merchant-logo.jpg
         category_id:
           type: integer
           format: int64
@@ -4237,6 +4834,131 @@ components:
           format: date-time
           example: "2026-07-11T15:30:00+08:00"
 
+    SettlementEntry:
+      type: object
+      required: [id, entry_no, merchant_id, entry_type, amount, available_at, created_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        entry_no:
+          type: string
+        merchant_id:
+          type: integer
+          format: int64
+        order_id:
+          type: integer
+          format: int64
+        refund_id:
+          type: integer
+          format: int64
+        entry_type:
+          type: string
+          enum: [sale, commission, refund, commission_refund, adjustment]
+        amount:
+          type: integer
+          format: int64
+          description: 单位分；销售和佣金冲正为正，佣金和退款为负
+        available_at:
+          type: string
+          format: date-time
+        settlement_id:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    SettlementEntryPage:
+      type: object
+      required: [list, page, page_size, total]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/SettlementEntry"
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          format: int64
+
+    MerchantSettlement:
+      type: object
+      required: [id, settlement_no, merchant_id, period_start, period_end, gross_amount, commission_amount, refund_amount, net_amount, status, status_text, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: int64
+        settlement_no:
+          type: string
+        merchant_id:
+          type: integer
+          format: int64
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        gross_amount:
+          type: integer
+          format: int64
+          description: 销售入账总额，单位分
+        commission_amount:
+          type: integer
+          format: int64
+          description: 扣除佣金冲正后的平台佣金，单位分
+        refund_amount:
+          type: integer
+          format: int64
+          description: 退款冲减总额，单位分
+        net_amount:
+          type: integer
+          format: int64
+          description: 商户应结金额，满足 gross_amount - commission_amount - refund_amount 加人工调整
+        status:
+          type: integer
+          enum: [1, 2, 3]
+        status_text:
+          type: string
+        confirmed_at:
+          type: string
+          format: date-time
+          nullable: true
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/SettlementEntry"
+
+    MerchantSettlementPage:
+      type: object
+      required: [list, page, page_size, total]
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/MerchantSettlement"
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          format: int64
+
     RegisterRequest:
       type: object
       required:
@@ -4417,6 +5139,54 @@ components:
         - 2
       example: 1
 
+    PublicMerchant:
+      type: object
+      required:
+        - id
+        - name
+        - logo
+        - status
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        name:
+          type: string
+          example: go-mall 自营店
+        logo:
+          type: string
+          example: https://example.com/merchant-logo.jpg
+        status:
+          type: integer
+          enum:
+            - 1
+          description: 公开接口只返回启用状态
+          example: 1
+
+    PublicMerchantPage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicMerchant"
+        page:
+          type: integer
+          example: 1
+        page_size:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          format: int64
+          example: 1
+
     MerchantRequest:
       type: object
       required:
@@ -4578,6 +5348,10 @@ components:
           type: string
           format: date-time
           example: "2026-07-31T23:59:59+08:00"
+        claimed:
+          type: boolean
+          description: 当前登录用户是否已达到该券的每人领取上限；仅买家可领取列表返回
+          example: false
 
     CouponRequest:
       type: object
@@ -5072,6 +5846,9 @@ components:
     CartItem:
       type: object
       required:
+        - merchant_id
+        - merchant_name
+        - merchant_logo
         - product_id
         - sku_id
         - product_name
@@ -5083,6 +5860,17 @@ components:
         - stock
         - available
       properties:
+        merchant_id:
+          type: integer
+          format: int64
+          description: SKU 所属商户；历史失效 SKU 无法识别时为 0
+          example: 1
+        merchant_name:
+          type: string
+          example: go-mall 自营店
+        merchant_logo:
+          type: string
+          example: https://example.com/merchant-logo.jpg
         product_id:
           type: integer
           format: int64
@@ -5139,6 +5927,73 @@ components:
         - 4
         - 5
       example: 1
+
+    TradeStatus:
+      type: integer
+      description: |
+        交易资金状态：
+        1 待支付
+        2 已支付
+        3 已关闭
+        4 部分退款
+        5 已退款
+      enum: [1, 2, 3, 4, 5]
+      example: 1
+
+    MerchantCouponSelection:
+      type: object
+      required:
+        - merchant_id
+        - user_coupon_id
+      properties:
+        merchant_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 必须是本次交易中的商户；0 表示平台券，M8 明确不支持
+        user_coupon_id:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 当前用户已领取且未使用的商户券 ID
+
+    TradePreviewRequest:
+      type: object
+      required:
+        - address_id
+        - items
+      properties:
+        address_id:
+          type: integer
+          format: int64
+          minimum: 1
+        merchant_coupons:
+          type: array
+          description: 每个商户最多选择一张商户券
+          items:
+            $ref: "#/components/schemas/MerchantCouponSelection"
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/OrderRequestItem"
+
+    CreateTradeRequest:
+      allOf:
+        - $ref: "#/components/schemas/TradePreviewRequest"
+        - type: object
+          required:
+            - idempotency_token
+          properties:
+            idempotency_token:
+              type: string
+              format: uuid
+              description: 最新交易预览接口返回的一次性令牌
+            remark:
+              type: string
+              maxLength: 255
+              description: 同步保存到本次全部商户子订单的买家备注
 
     OrderPreviewRequest:
       type: object
@@ -5267,14 +6122,31 @@ components:
     CreatePaymentRequest:
       type: object
       required:
-        - order_id
         - pay_channel
+      oneOf:
+        - required:
+            - order_id
+          not:
+            required:
+              - trade_id
+        - required:
+            - trade_id
+          not:
+            required:
+              - order_id
       properties:
         order_id:
           type: integer
           format: int64
           minimum: 1
           example: 1
+          description: 旧单商户订单 ID；交易子订单不能使用该字段支付
+        trade_id:
+          type: integer
+          format: int64
+          minimum: 1
+          example: 10
+          description: M8 交易 ID；使用后支付金额覆盖交易下全部商户子订单
         pay_channel:
           $ref: "#/components/schemas/PaymentChannel"
         pay_scene:
@@ -5283,20 +6155,50 @@ components:
     Payment:
       type: object
       required:
+        - id
         - payment_no
-        - order_id
+        - user_id
         - amount
         - pay_channel
         - pay_scene
         - status
+        - status_text
+        - transaction_id
+        - failure_reason
+        - paid_at
+        - closed_at
       properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
         payment_no:
           type: string
           example: PAY2026070600000001
+        trade_id:
+          type: integer
+          format: int64
+          description: 交易支付时返回；旧订单支付为空
+        trade_no:
+          type: string
+          description: 交易支付时返回
         order_id:
           type: integer
           format: int64
           example: 1
+          description: 旧订单支付时返回；交易支付为空
+        order_no:
+          type: string
+          example: "2026070600000001"
+        user_id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
+          description: 旧订单支付时返回；跨商户交易支付为空
         amount:
           type: integer
           format: int64
@@ -5308,15 +6210,52 @@ components:
           $ref: "#/components/schemas/PaymentScene"
         status:
           $ref: "#/components/schemas/PaymentStatus"
+        status_text:
+          type: string
+          example: 待支付
+        transaction_id:
+          type: string
+          description: 支付渠道交易号，支付成功前为空字符串
+        failure_reason:
+          type: string
+          description: 支付明确失败时的原因，其余状态为空字符串
         pay_params:
           type: object
           description: 支付参数。支付宝网页支付会返回 pay_url，前端可跳转该地址。
           additionalProperties: true
+        allocations:
+          type: array
+          description: 交易支付的子订单金额分配；旧订单支付为空
+          items:
+            $ref: "#/components/schemas/PaymentAllocation"
         paid_at:
           type: string
           format: date-time
           nullable: true
           example: null
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: null
+
+    PaymentAllocation:
+      type: object
+      required:
+        - order_id
+        - merchant_id
+        - amount
+      properties:
+        order_id:
+          type: integer
+          format: int64
+        merchant_id:
+          type: integer
+          format: int64
+        amount:
+          type: integer
+          format: int64
+          description: 分配给该商户子订单的支付金额，单位分
 
     ShipOrderRequest:
       type: object
@@ -5440,6 +6379,7 @@ components:
     OrderPreview:
       type: object
       required:
+        - idempotency_token
         - merchant_id
         - merchant_name
         - address
@@ -5448,7 +6388,12 @@ components:
         - freight_amount
         - discount_amount
         - payable_amount
+        - user_coupon_id
       properties:
+        idempotency_token:
+          type: string
+          description: 创建订单时必须原样提交的一次性预览令牌
+          example: 7a2c1f80-0000-0000-0000-000000000000
         merchant_id:
           type: integer
           format: int64
@@ -5483,6 +6428,170 @@ components:
           format: int64
           description: 应付金额，单位分
           example: 1199800
+        user_coupon_id:
+          type: integer
+          format: int64
+          description: 本次预览使用的用户优惠券 ID，0 表示未使用
+          example: 0
+
+    TradeMerchantGroup:
+      type: object
+      required:
+        - merchant_id
+        - merchant_name
+        - merchant_logo
+        - items
+        - goods_amount
+        - freight_amount
+        - discount_amount
+        - payable_amount
+        - user_coupon_id
+      properties:
+        merchant_id:
+          type: integer
+          format: int64
+        merchant_name:
+          type: string
+        merchant_logo:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        goods_amount:
+          type: integer
+          format: int64
+          description: 当前商户商品金额，单位分
+        freight_amount:
+          type: integer
+          format: int64
+          description: 当前商户运费，单位分；M8-C 第一版为 0
+        discount_amount:
+          type: integer
+          format: int64
+          description: 当前商户券优惠金额，单位分
+        payable_amount:
+          type: integer
+          format: int64
+          description: 当前商户子订单应付金额，单位分
+        user_coupon_id:
+          type: integer
+          format: int64
+          description: 当前商户核销的用户券 ID，0 表示未使用
+
+    TradePreview:
+      type: object
+      required:
+        - idempotency_token
+        - address
+        - merchant_groups
+        - goods_amount
+        - freight_amount
+        - discount_amount
+        - payable_amount
+      properties:
+        idempotency_token:
+          type: string
+          format: uuid
+        address:
+          $ref: "#/components/schemas/Address"
+        merchant_groups:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TradeMerchantGroup"
+        goods_amount:
+          type: integer
+          format: int64
+        freight_amount:
+          type: integer
+          format: int64
+        discount_amount:
+          type: integer
+          format: int64
+        payable_amount:
+          type: integer
+          format: int64
+
+    TradePage:
+      type: object
+      required:
+        - list
+        - page
+        - page_size
+        - total
+      properties:
+        list:
+          type: array
+          items:
+            $ref: "#/components/schemas/Trade"
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          format: int64
+
+    Trade:
+      type: object
+      required:
+        - id
+        - trade_no
+        - user_id
+        - status
+        - status_text
+        - goods_amount
+        - freight_amount
+        - discount_amount
+        - payable_amount
+        - orders
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          format: int64
+        trade_no:
+          type: string
+        user_id:
+          type: integer
+          format: int64
+        status:
+          $ref: "#/components/schemas/TradeStatus"
+        status_text:
+          type: string
+        goods_amount:
+          type: integer
+          format: int64
+        freight_amount:
+          type: integer
+          format: int64
+        discount_amount:
+          type: integer
+          format: int64
+        payable_amount:
+          type: integer
+          format: int64
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        orders:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/Order"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     OrderPage:
       type: object
@@ -5524,6 +6633,7 @@ components:
         - freight_amount
         - discount_amount
         - payable_amount
+        - user_coupon_id
         - remark
         - items
         - created_at
@@ -5533,6 +6643,11 @@ components:
           type: integer
           format: int64
           example: 1
+        trade_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: M8 交易单 ID；尚未回填的旧订单可能为空
         order_no:
           type: string
           example: "2026070600000001"
@@ -5582,6 +6697,11 @@ components:
           format: int64
           description: 应付金额，单位分
           example: 1199800
+        user_coupon_id:
+          type: integer
+          format: int64
+          description: 实际核销的用户优惠券 ID，0 表示未使用
+          example: 0
         remark:
           type: string
           example: 请工作日配送
@@ -5629,6 +6749,8 @@ components:
         - price
         - quantity
         - subtotal
+        - discount_amount
+        - payable_amount
       properties:
         id:
           type: integer
@@ -5664,6 +6786,18 @@ components:
           format: int64
           description: 小计金额，单位分
           example: 1199800
+        discount_amount:
+          type: integer
+          format: int64
+          description: 当前订单明细承担的优惠金额快照，单位分
+          minimum: 0
+          example: 10000
+        payable_amount:
+          type: integer
+          format: int64
+          description: 当前订单明细优惠后的商品实付金额快照，单位分
+          minimum: 0
+          example: 1189800
 
     AfterSaleType:
       type: string
@@ -5739,13 +6873,24 @@ components:
       required:
         - id
         - after_sale_no
+        - order_no
         - order_id
         - order_item_id
+        - product_name
+        - sku_name
+        - sku_image
+        - user_id
+        - merchant_id
         - type
+        - type_text
         - status
+        - status_text
         - reason
+        - description
+        - images
         - refund_amount
         - created_at
+        - updated_at
       properties:
         id:
           type: integer
@@ -5763,10 +6908,24 @@ components:
           type: integer
           format: int64
           example: 1
+        user_id:
+          type: integer
+          format: int64
+          example: 1
+        merchant_id:
+          type: integer
+          format: int64
+          example: 1
         type:
           $ref: "#/components/schemas/AfterSaleType"
+        type_text:
+          type: string
+          example: 仅退款
         status:
           $ref: "#/components/schemas/AfterSaleStatus"
+        status_text:
+          type: string
+          example: 待商家审核
         reason:
           type: string
           example: 商品不想要了
@@ -5816,6 +6975,14 @@ components:
     Refund:
       type: object
       properties:
+        trade_id:
+          type: integer
+          format: int64
+          description: 原支付所属交易 ID
+        payment_allocation_id:
+          type: integer
+          format: int64
+          description: 本次退款冲减的子订单支付分配 ID
         refund_no:
           type: string
         pay_channel:
@@ -5825,14 +6992,29 @@ components:
           format: int64
         status:
           type: integer
-          enum: [1, 2, 3]
-          description: 1 处理中，2 成功，3 失败
+          enum: [1, 2, 3, 4]
+          description: 1 处理中，2 成功，3 明确失败，4 渠道结果未知、等待主动查询
         status_text:
           type: string
         transaction_id:
           type: string
         failure_reason:
           type: string
+          description: 只有明确失败时填写
+        last_error:
+          type: string
+          description: 结果未知时记录最近一次渠道错误或状态说明
+        retry_count:
+          type: integer
+          description: 进入待确认状态并安排对账的次数
+        last_attempt_at:
+          type: string
+          format: date-time
+          nullable: true
+        next_retry_at:
+          type: string
+          format: date-time
+          nullable: true
         refunded_at:
           type: string
           format: date-time

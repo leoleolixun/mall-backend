@@ -93,7 +93,17 @@ func amountFenToYuan(amount int64) string {
 }
 
 func alipayPaymentSubject(payment model.Payment) string {
+	if payment.TradeID != nil {
+		return fmt.Sprintf("go-mall 交易 %s", payment.PaymentNo)
+	}
 	return fmt.Sprintf("go-mall 订单 %s", payment.OrderNo)
+}
+
+func alipayPaymentBody(payment model.Payment) string {
+	if payment.TradeID != nil {
+		return fmt.Sprintf("trade:%d", *payment.TradeID)
+	}
+	return payment.OrderNo
 }
 
 func (s *paymentService) validateAlipayPayScene(payScene string) error {
@@ -157,7 +167,7 @@ func (s *paymentService) buildAlipayPayParams(ctx context.Context, payment model
 				OutTradeNo:     payment.PaymentNo,
 				TotalAmount:    amountFenToYuan(payment.Amount),
 				ProductCode:    productCode,
-				Body:           payment.OrderNo,
+				Body:           alipayPaymentBody(payment),
 				TimeoutExpress: timeoutExpress,
 			},
 		})
@@ -201,7 +211,7 @@ func (s *paymentService) buildAlipayPayParams(ctx context.Context, payment model
 				OutTradeNo:     payment.PaymentNo,
 				TotalAmount:    amountFenToYuan(payment.Amount),
 				ProductCode:    productCode,
-				Body:           payment.OrderNo,
+				Body:           alipayPaymentBody(payment),
 				TimeoutExpress: timeoutExpress,
 			},
 			QuitURL: cfg.Wap.QuitURL,
@@ -266,7 +276,7 @@ func (s *paymentService) AlipayNotify(ctx context.Context, values url.Values) er
 	}
 
 	return s.paymentRepo.Transaction(ctx, func(repo repository.PaymentRepository) error {
-		payment, err := repo.FindByPaymentNo(ctx, paymentNo)
+		payment, err := repo.FindByPaymentNoForUpdate(ctx, paymentNo)
 		if err != nil {
 			return fmt.Errorf("支付单不存在")
 		}
@@ -276,39 +286,12 @@ func (s *paymentService) AlipayNotify(ctx context.Context, values url.Values) er
 		if notification.TotalAmount != amountFenToYuan(payment.Amount) {
 			return fmt.Errorf("支付宝通知金额不匹配")
 		}
-		if payment.Status == model.PaymentStatusPaid {
-			return nil
-		}
-		if payment.Status != model.PaymentStatusPending {
+		if payment.Status != model.PaymentStatusPending && payment.Status != model.PaymentStatusPaid &&
+			payment.Status != model.PaymentStatusPartiallyRefunded && payment.Status != model.PaymentStatusRefunded {
 			return fmt.Errorf("当前支付单状态不能完成支付")
 		}
 
-		order, err := repo.FindOrderByIDAndUserID(ctx, payment.OrderID, payment.UserID)
-		if err != nil {
-			return fmt.Errorf("订单不存在")
-		}
-		if order.Status == model.OrderStatusPaid {
-			return nil
-		}
-		if order.Status != model.OrderStatusPendingPayment {
-			return fmt.Errorf("当前订单状态不能支付")
-		}
-
 		paidAt := parseAlipayPaidAt(notification.GmtPayment)
-		if err := repo.MarkPaid(ctx, payment.ID, payment.UserID, notification.TradeNo, paidAt); err != nil {
-			return err
-		}
-		if err := repo.UpdateOrderStatus(
-			ctx,
-			order.ID,
-			payment.UserID,
-			model.OrderStatusPendingPayment,
-			model.OrderStatusPaid,
-			&paidAt,
-		); err != nil {
-			return err
-		}
-
-		return nil
+		return s.completePayment(ctx, repo, payment, notification.TradeNo, paidAt)
 	})
 }

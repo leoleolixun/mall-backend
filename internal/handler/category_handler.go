@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"go-mall/internal/service"
 	"go-mall/pkg/response"
 	"net/http"
@@ -22,6 +23,10 @@ func NewCategoryHandler(categoryService service.CategoryService) *CategoryHandle
 // List 获取商品分类列表
 func (h *CategoryHandler) List(c *gin.Context) {
 	categories, err := h.categoryService.List(c.Request.Context())
+	if errors.Is(err, service.ErrPublicMerchantNotFound) {
+		response.Error(c, http.StatusNotFound, response.CodeNotFound, err.Error())
+		return
+	}
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, response.CodeInternalError, "查询商品分类失败")
 		return

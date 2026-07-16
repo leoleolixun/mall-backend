@@ -1,0 +1,20 @@
+CREATE TABLE merchant_settlements (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    settlement_no VARCHAR(64) NOT NULL,
+    merchant_id BIGINT NOT NULL,
+    period_start DATETIME(3) NOT NULL,
+    period_end DATETIME(3) NOT NULL,
+    gross_amount BIGINT NOT NULL DEFAULT 0,
+    commission_amount BIGINT NOT NULL DEFAULT 0,
+    refund_amount BIGINT NOT NULL DEFAULT 0,
+    net_amount BIGINT NOT NULL DEFAULT 0,
+    status TINYINT NOT NULL DEFAULT 1,
+    confirmed_at DATETIME(3) NULL,
+    paid_at DATETIME(3) NULL,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_merchant_settlements_no (settlement_no),
+    UNIQUE KEY uk_merchant_settlements_period (merchant_id, period_start, period_end),
+    KEY idx_merchant_settlements_status_period (status, period_end, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

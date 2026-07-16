@@ -15,9 +15,24 @@ order:
   shipped_auto_complete_days: 10
   complete_batch_size: 100
 
+settlement:
+  # 结算命令总开关。首次部署先保持 false，完成 M8 migration 和对账后再开启。
+  enabled: false
+  # 子订单完成后继续保留的售后观察期；到期后销售和冲正流水才可进入结算单。
+  hold_days: 7
+  # 单次补记结算流水最多扫描的已完成订单数，最大 1000。
+  batch_size: 100
+
 server:
   port: 8080
+  # 线上必须使用 release；systemd 中的 GIN_MODE 会覆盖这里。
   mode: debug
+  # 仅信任同机 Nginx 转发的客户端 IP 头，禁止保留 Gin 的默认全代理信任。
+  trusted_proxies:
+    - 127.0.0.1
+    - ::1
+  # 同域部署可保持空数组；跨域部署时只填写完整的正式前端来源，不允许使用 *。
+  cors_allowed_origins: []
 
 mysql:
   host: 127.0.0.1
@@ -36,8 +51,11 @@ redis:
 
 log:
   level: debug
+  # 生产环境必须使用 json，便于按 request_id、user_id 和 merchant_id 检索。
+  format: json
 
 jwt:
+  # 两个密钥都必须至少 32 字节，并且不能相同或继续使用示例值。
   access_secret: change_me
   access_ttl_minutes: 120
   refresh_ttl_hours: 168
@@ -45,6 +63,18 @@ jwt:
   merchant_access_secret: change_me_to_another_secret
   merchant_access_ttl_minutes: 120
   merchant_refresh_ttl_hours: 168
+
+auth:
+  # 仅允许 debug 环境本地联调。该接口信任客户端 open_id，不能在生产环境开放。
+  # 正式小程序接入后应保持 false，改用 wx.login code -> 服务端 code2session。
+  unsafe_wechat_open_id_login_enabled: false
+  # 按客户端 IP 限制认证入口，用户名维度的连续失败限制仍会同时生效。
+  login_rate_limit_per_minute: 20
+  refresh_rate_limit_per_minute: 60
+
+observability:
+  # 指标仅监听在后端端口；Nginx 不应将 /metrics 暴露到公网。
+  metrics_enabled: true
 
 storage:
   # 留空表示暂不启用；可选 cos（腾讯云 COS）或 qiniu（七牛 Kodo）。
@@ -70,6 +100,15 @@ storage:
     secret_key: ""
 
 payment:
+  # 仅用于本地开发和自动化测试。生产环境必须保持 false。
+  mock_enabled: false
+  refund:
+    # 退款结果未知时由 reconcile-refunds 定时任务主动查询支付宝。
+    reconcile_enabled: false
+    # 查询失败或结果仍未知时，等待多少分钟后再次对账。
+    retry_interval_minutes: 5
+    # 每次任务最多处理的退款单数，最大限制为 1000。
+    reconcile_batch_size: 100
   alipay:
     # true 表示启用支付宝真实支付；false 时 alipay 支付会直接返回配置错误。
     enabled: false

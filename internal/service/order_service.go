@@ -11,6 +11,7 @@ import (
 
 	"go-mall/internal/dto"
 	"go-mall/internal/model"
+	"go-mall/internal/pricing"
 	"go-mall/internal/repository"
 
 	"github.com/google/uuid"
@@ -50,6 +51,10 @@ func NewOrderService(
 
 func orderIdempotencyKey(userID int64, token string) string {
 	return fmt.Sprintf("mall:order:idempotency:%d:%s", userID, token)
+}
+
+func legacyOrderTradeIdempotencyKey(token string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte("legacy-order:"+token)))
 }
 
 const acquireOrderIdempotencyScript = `
@@ -109,15 +114,17 @@ func buildReceiverAddress(address *model.Address) string {
 
 func toOrderItemResponse(item model.OrderItem) dto.OrderItemResponse {
 	return dto.OrderItemResponse{
-		ID:          item.ID,
-		ProductID:   item.ProductID,
-		SKUID:       item.SKUID,
-		ProductName: item.ProductName,
-		SKUName:     item.SKUName,
-		SKUImage:    item.SKUImage,
-		Price:       item.Price,
-		Quantity:    item.Quantity,
-		Subtotal:    item.Subtotal,
+		ID:             item.ID,
+		ProductID:      item.ProductID,
+		SKUID:          item.SKUID,
+		ProductName:    item.ProductName,
+		SKUName:        item.SKUName,
+		SKUImage:       item.SKUImage,
+		Price:          item.Price,
+		Quantity:       item.Quantity,
+		Subtotal:       item.Subtotal,
+		DiscountAmount: item.DiscountAmount,
+		PayableAmount:  item.PayableAmount,
 	}
 }
 
@@ -145,12 +152,18 @@ func toOrderResponse(order model.Order, items []model.OrderItem) *dto.OrderRespo
 		completedAt = &value
 	}
 
+	merchantName := "默认商户"
+	if order.MerchantName != nil && strings.TrimSpace(*order.MerchantName) != "" {
+		merchantName = *order.MerchantName
+	}
+
 	return &dto.OrderResponse{
 		ID:              order.ID,
+		TradeID:         order.TradeID,
 		OrderNo:         order.OrderNo,
 		UserID:          order.UserID,
 		MerchantID:      order.MerchantID,
-		MerchantName:    "默认商户",
+		MerchantName:    merchantName,
 		Status:          order.Status,
 		StatusText:      orderStatusText(order.Status),
 		ReceiverName:    order.ReceiverName,
@@ -310,6 +323,7 @@ func (s *orderService) Preview(
 
 		quantityMap[item.SKUID] += item.Quantity
 	}
+	sort.Slice(skuIDs, func(i, j int) bool { return skuIDs[i] < skuIDs[j] })
 
 	// 批量查询 SKU
 
@@ -344,9 +358,9 @@ func (s *orderService) Preview(
 
 	// 校验商品并组装明细
 	items := make([]dto.OrderItemResponse, 0, len(quantityMap))
-	var goodsAmount int64
 
-	for skuID, quantity := range quantityMap {
+	for _, skuID := range skuIDs {
+		quantity := quantityMap[skuID]
 		sku, ok := skuMap[skuID]
 		if !ok {
 			return nil, fmt.Errorf("SKU 不存在")
@@ -369,8 +383,10 @@ func (s *orderService) Preview(
 			return nil, fmt.Errorf("商品已下架")
 		}
 
-		subtotal := sku.Price * int64(quantity)
-		goodsAmount += subtotal
+		subtotal, err := pricing.CalculateSubtotal(sku.Price, quantity)
+		if err != nil {
+			return nil, err
+		}
 
 		items = append(items, dto.OrderItemResponse{
 			ProductID:   product.ID,
@@ -383,6 +399,14 @@ func (s *orderService) Preview(
 			Subtotal:    subtotal,
 		})
 	}
+	subtotals := make([]int64, len(items))
+	for i := range items {
+		subtotals[i] = items[i].Subtotal
+	}
+	goodsAmount, err := pricing.SumSubtotals(subtotals)
+	if err != nil {
+		return nil, err
+	}
 
 	// 返回预览结果
 	freightAmount := int64(0)
@@ -394,13 +418,21 @@ func (s *orderService) Preview(
 		}
 		coupon, err := s.orderRepo.FindCoupon(ctx, userCoupon.CouponID)
 		now := time.Now()
-		if err != nil || coupon.MerchantID != defaultMerchantID || coupon.Status != model.CouponStatusActive || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
+		if err != nil || coupon.MerchantID != defaultMerchantID || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
 			return nil, fmt.Errorf("优惠券不满足使用条件")
 		}
 		discountAmount = coupon.DiscountAmount
 		if discountAmount > goodsAmount {
 			discountAmount = goodsAmount
 		}
+	}
+	itemAmounts, err := pricing.AllocateOrderItems(subtotals, discountAmount)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].DiscountAmount = itemAmounts[i].DiscountAmount
+		items[i].PayableAmount = itemAmounts[i].PayableAmount
 	}
 	payableAmount := goodsAmount + freightAmount - discountAmount
 	idempotencyToken := uuid.NewString()
@@ -469,6 +501,7 @@ func (s *orderService) Create(
 
 		quantityMap[item.SKUID] += item.Quantity
 	}
+	sort.Slice(skuIDs, func(i, j int) bool { return skuIDs[i] < skuIDs[j] })
 
 	tokenKey := orderIdempotencyKey(userID, req.IdempotencyToken)
 	tokenState, err := s.acquireOrderIdempotencyToken(ctx, userID, req.IdempotencyToken, orderPreviewFingerprint(req.AddressID, req.UserCouponID, req.Items))
@@ -500,6 +533,10 @@ func (s *orderService) Create(
 		address, err := s.addressRepo.FindByIDAndUserID(ctx, req.AddressID, userID)
 		if err != nil {
 			return fmt.Errorf("收货地址不存在")
+		}
+		merchant, err := repo.FindMerchantByID(ctx, defaultMerchantID)
+		if err != nil || merchant.Status != model.StatusEnabled {
+			return fmt.Errorf("商户不存在或已停用")
 		}
 
 		skus, err := s.productRepo.FindSKUsByIDs(ctx, defaultMerchantID, skuIDs)
@@ -543,9 +580,9 @@ func (s *orderService) Create(
 		}
 
 		items := make([]model.OrderItem, 0, len(quantityMap))
-		var goodsAmount int64
 
-		for skuID, quantity := range quantityMap {
+		for _, skuID := range skuIDs {
+			quantity := quantityMap[skuID]
 			sku, ok := skuMap[skuID]
 			if !ok {
 				return fmt.Errorf("SKU 不存在")
@@ -584,8 +621,10 @@ func (s *orderService) Create(
 				Remark:        "创建订单扣减库存",
 			})
 
-			subtotal := sku.Price * int64(quantity)
-			goodsAmount += subtotal
+			subtotal, err := pricing.CalculateSubtotal(sku.Price, quantity)
+			if err != nil {
+				return err
+			}
 
 			items = append(items, model.OrderItem{
 				ProductID:   product.ID,
@@ -598,6 +637,14 @@ func (s *orderService) Create(
 				Subtotal:    subtotal,
 			})
 		}
+		subtotals := make([]int64, len(items))
+		for i := range items {
+			subtotals[i] = items[i].Subtotal
+		}
+		goodsAmount, err := pricing.SumSubtotals(subtotals)
+		if err != nil {
+			return err
+		}
 
 		discountAmount := int64(0)
 		var usedCoupon *model.UserCoupon
@@ -608,7 +655,7 @@ func (s *orderService) Create(
 			}
 			coupon, err := repo.FindCoupon(ctx, userCoupon.CouponID)
 			now := time.Now()
-			if err != nil || coupon.MerchantID != defaultMerchantID || coupon.Status != model.CouponStatusActive || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
+			if err != nil || coupon.MerchantID != defaultMerchantID || now.Before(coupon.StartAt) || !now.Before(coupon.EndAt) || goodsAmount < coupon.ThresholdAmount {
 				return fmt.Errorf("优惠券不满足使用条件")
 			}
 			discountAmount = coupon.DiscountAmount
@@ -617,12 +664,46 @@ func (s *orderService) Create(
 			}
 			usedCoupon = userCoupon
 		}
+		itemAmounts, err := pricing.AllocateOrderItems(subtotals, discountAmount)
+		if err != nil {
+			return err
+		}
+		for i := range items {
+			items[i].DiscountAmount = itemAmounts[i].DiscountAmount
+			items[i].PayableAmount = itemAmounts[i].PayableAmount
+		}
 
 		order.GoodsAmount = goodsAmount
 		order.FreightAmount = 0
 		order.DiscountAmount = discountAmount
 		order.PayableAmount = goodsAmount - discountAmount
 		order.UserCouponID = req.UserCouponID
+		commissionAmount, err := calculateCommissionAmount(order.PayableAmount, merchant.CommissionRateBPS)
+		if err != nil {
+			return err
+		}
+		settlementAmount := order.PayableAmount - commissionAmount
+		merchantName := merchant.Name
+		commissionRate := merchant.CommissionRateBPS
+		order.MerchantName = &merchantName
+		order.CommissionRateBPS = &commissionRate
+		order.CommissionAmount = &commissionAmount
+		order.SettlementAmount = &settlementAmount
+		trade := &model.Trade{
+			TradeNo:        generateTradeNo(),
+			UserID:         userID,
+			Status:         model.TradeStatusPendingPayment,
+			GoodsAmount:    order.GoodsAmount,
+			FreightAmount:  order.FreightAmount,
+			DiscountAmount: order.DiscountAmount,
+			PayableAmount:  order.PayableAmount,
+			IdempotencyKey: legacyOrderTradeIdempotencyKey(req.IdempotencyToken),
+		}
+		if err := repo.CreateTrade(ctx, trade); err != nil {
+			return err
+		}
+		tradeID := trade.ID
+		order.TradeID = &tradeID
 
 		if err := repo.Create(ctx, order); err != nil {
 			return err

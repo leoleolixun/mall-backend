@@ -24,6 +24,7 @@ func parseAfterSaleID(c *gin.Context) (int64, bool) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "售后 ID 不合法")
 		return 0, false
 	}
+	middleware.SetAuditLogField(c, "after_sale_id", id)
 	return id, true
 }
 
@@ -62,6 +63,9 @@ func (h *AfterSaleHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	middleware.SetAuditLogField(c, "order_id", result.OrderID)
+	middleware.SetAuditLogField(c, "order_no", result.OrderNo)
+	middleware.SetAuditLogField(c, "after_sale_no", result.AfterSaleNo)
 	response.Success(c, result)
 }
 
@@ -97,6 +101,10 @@ func (h *AfterSaleHandler) Detail(c *gin.Context) {
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
+	}
+	middleware.SetAuditLogField(c, "after_sale_no", result.AfterSaleNo)
+	if result.Refund != nil {
+		middleware.SetAuditLogField(c, "refund_no", result.Refund.RefundNo)
 	}
 	response.Success(c, result)
 }
@@ -151,6 +159,32 @@ func (h *AfterSaleHandler) MerchantApprove(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	middleware.SetAuditLogField(c, "after_sale_no", result.AfterSaleNo)
+	if result.Refund != nil {
+		middleware.SetAuditLogField(c, "refund_no", result.Refund.RefundNo)
+	}
+	response.Success(c, result)
+}
+
+func (h *AfterSaleHandler) MerchantSyncRefund(c *gin.Context) {
+	identity, ok := middleware.CurrentMerchant(c)
+	if !ok {
+		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "商家后台未登录")
+		return
+	}
+	id, ok := parseAfterSaleID(c)
+	if !ok {
+		return
+	}
+	result, err := h.service.MerchantSyncRefund(c.Request.Context(), identity.MerchantID, id)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+	middleware.SetAuditLogField(c, "after_sale_no", result.AfterSaleNo)
+	if result.Refund != nil {
+		middleware.SetAuditLogField(c, "refund_no", result.Refund.RefundNo)
+	}
 	response.Success(c, result)
 }
 
@@ -174,5 +208,6 @@ func (h *AfterSaleHandler) MerchantReject(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	middleware.SetAuditLogField(c, "after_sale_no", result.AfterSaleNo)
 	response.Success(c, result)
 }

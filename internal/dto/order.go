@@ -26,15 +26,17 @@ type OrderListRequest struct {
 }
 
 type OrderItemResponse struct {
-	ID          int64  `json:"id"`
-	ProductID   int64  `json:"product_id"`
-	SKUID       int64  `json:"sku_id"`
-	ProductName string `json:"product_name"`
-	SKUName     string `json:"sku_name"`
-	SKUImage    string `json:"sku_image"`
-	Price       int64  `json:"price"`
-	Quantity    int    `json:"quantity"`
-	Subtotal    int64  `json:"subtotal"`
+	ID             int64  `json:"id"`
+	ProductID      int64  `json:"product_id"`
+	SKUID          int64  `json:"sku_id"`
+	ProductName    string `json:"product_name"`
+	SKUName        string `json:"sku_name"`
+	SKUImage       string `json:"sku_image"`
+	Price          int64  `json:"price"`
+	Quantity       int    `json:"quantity"`
+	Subtotal       int64  `json:"subtotal"`
+	DiscountAmount int64  `json:"discount_amount"`
+	PayableAmount  int64  `json:"payable_amount"`
 }
 
 type OrderPreviewResponse struct {
@@ -52,6 +54,7 @@ type OrderPreviewResponse struct {
 
 type OrderResponse struct {
 	ID              int64               `json:"id"`
+	TradeID         *int64              `json:"trade_id,omitempty"`
 	OrderNo         string              `json:"order_no"`
 	UserID          int64               `json:"user_id"`
 	MerchantID      int64               `json:"merchant_id"`

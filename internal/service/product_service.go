@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"go-mall/internal/dto"
+	"go-mall/internal/model"
 	"go-mall/internal/repository"
 	"time"
 
@@ -22,17 +23,19 @@ type ProductService interface {
 }
 
 type productService struct {
-	productRepo repository.ProductRepository
-	redis       *redis.Client
+	productRepo  repository.ProductRepository
+	merchantRepo repository.MerchantRepository
+	redis        *redis.Client
 }
 
 const productDetailCacheTTL = 5 * time.Minute
 const emptyCacheTTL = time.Minute
 
-func NewProductService(productRepo repository.ProductRepository, redis *redis.Client) ProductService {
+func NewProductService(productRepo repository.ProductRepository, merchantRepo repository.MerchantRepository, redis *redis.Client) ProductService {
 	return &productService{
-		productRepo: productRepo,
-		redis:       redis,
+		productRepo:  productRepo,
+		merchantRepo: merchantRepo,
+		redis:        redis,
 	}
 }
 
@@ -50,7 +53,7 @@ func (s *productService) List(ctx context.Context, req dto.ProductListRequest) (
 
 	products, total, err := s.productRepo.ListOnSale(
 		ctx,
-		defaultMerchantID,
+		req.MerchantID,
 		req.CategoryID,
 		req.Keyword,
 		offset,
@@ -65,20 +68,39 @@ func (s *productService) List(ctx context.Context, req dto.ProductListRequest) (
 		productIDs = append(productIDs, product.ID)
 	}
 
-	minPrices, err := s.productRepo.FindMinPrices(ctx, defaultMerchantID, productIDs)
+	minPrices, err := s.productRepo.FindMinPrices(ctx, req.MerchantID, productIDs)
 	if err != nil {
 		return nil, err
+	}
+	merchantIDs := make([]int64, 0, len(products))
+	merchantIDSet := make(map[int64]struct{})
+	for _, product := range products {
+		if _, exists := merchantIDSet[product.MerchantID]; !exists {
+			merchantIDSet[product.MerchantID] = struct{}{}
+			merchantIDs = append(merchantIDs, product.MerchantID)
+		}
+	}
+	merchants, err := s.merchantRepo.FindByIDs(ctx, merchantIDs)
+	if err != nil {
+		return nil, err
+	}
+	merchantMap := make(map[int64]model.Merchant, len(merchants))
+	for _, merchant := range merchants {
+		merchantMap[merchant.ID] = merchant
 	}
 
 	items := make([]dto.ProductListItem, 0, len(products))
 	for _, product := range products {
+		merchant := merchantMap[product.MerchantID]
 		items = append(items, dto.ProductListItem{
-			ID:         product.ID,
-			MerchantID: product.MerchantID,
-			CategoryID: product.CategoryID,
-			Name:       product.Name,
-			Cover:      product.Cover,
-			MinPrice:   minPrices[product.ID],
+			ID:           product.ID,
+			MerchantID:   product.MerchantID,
+			MerchantName: merchant.Name,
+			MerchantLogo: merchant.Logo,
+			CategoryID:   product.CategoryID,
+			Name:         product.Name,
+			Cover:        product.Cover,
+			MinPrice:     minPrices[product.ID],
 		})
 	}
 
@@ -96,28 +118,38 @@ func (s *productService) Detail(ctx context.Context, id int64) (*dto.ProductDeta
 	if err == nil {
 		var cachedDetail dto.ProductDetailResponse
 		if err := json.Unmarshal([]byte(cached), &cachedDetail); err == nil {
-			return &cachedDetail, nil
+			if merchant, merchantErr := s.merchantRepo.FindEnabledByID(ctx, cachedDetail.MerchantID); merchantErr == nil {
+				cachedDetail.MerchantName = merchant.Name
+				cachedDetail.MerchantLogo = merchant.Logo
+				return &cachedDetail, nil
+			}
 		}
 	}
 
-	product, err := s.productRepo.FindOnSaleByID(ctx, defaultMerchantID, id)
+	product, err := s.productRepo.FindOnSaleByID(ctx, 0, id)
+	if err != nil {
+		return nil, err
+	}
+	merchant, err := s.merchantRepo.FindEnabledByID(ctx, product.MerchantID)
 	if err != nil {
 		return nil, err
 	}
 
-	skus, err := s.SKUs(ctx, product.ID)
+	skus, err := s.listSKUs(ctx, product.MerchantID, product.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	detail := &dto.ProductDetailResponse{
-		ID:          product.ID,
-		MerchantID:  product.MerchantID,
-		CategoryID:  product.CategoryID,
-		Name:        product.Name,
-		Cover:       product.Cover,
-		Description: product.Description,
-		SKUs:        skus,
+		ID:           product.ID,
+		MerchantID:   product.MerchantID,
+		MerchantName: merchant.Name,
+		MerchantLogo: merchant.Logo,
+		CategoryID:   product.CategoryID,
+		Name:         product.Name,
+		Cover:        product.Cover,
+		Description:  product.Description,
+		SKUs:         skus,
 	}
 
 	payload, err := json.Marshal(detail)
@@ -129,7 +161,15 @@ func (s *productService) Detail(ctx context.Context, id int64) (*dto.ProductDeta
 }
 
 func (s *productService) SKUs(ctx context.Context, productID int64) ([]dto.SKUResponse, error) {
-	skus, err := s.productRepo.ListEnabledSKUs(ctx, defaultMerchantID, productID)
+	product, err := s.productRepo.FindOnSaleByID(ctx, 0, productID)
+	if err != nil {
+		return nil, err
+	}
+	return s.listSKUs(ctx, product.MerchantID, productID)
+}
+
+func (s *productService) listSKUs(ctx context.Context, merchantID, productID int64) ([]dto.SKUResponse, error) {
+	skus, err := s.productRepo.ListEnabledSKUs(ctx, merchantID, productID)
 	if err != nil {
 		return nil, err
 	}

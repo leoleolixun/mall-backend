@@ -31,7 +31,16 @@ func (h *CouponHandler) Available(c *gin.Context) {
 		response.Error(c, http.StatusUnauthorized, response.CodeUnauthorized, "未登录")
 		return
 	}
-	result, err := h.service.Available(c.Request.Context(), userID)
+	merchantID := defaultLegacyMerchantID
+	if value := c.Query("merchant_id"); value != "" {
+		parsedMerchantID, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || parsedMerchantID <= 0 {
+			response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "merchant_id 参数不合法")
+			return
+		}
+		merchantID = parsedMerchantID
+	}
+	result, err := h.service.Available(c.Request.Context(), userID, merchantID)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return

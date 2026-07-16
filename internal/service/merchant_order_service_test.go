@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,10 +32,12 @@ func (r *fakeMerchantOrderRepository) ListByMerchantID(
 	offset int,
 	limit int,
 	status int,
+	keyword string,
 ) ([]model.Order, int64, error) {
 	filtered := make([]model.Order, 0)
 	for _, order := range r.orders {
-		if order.MerchantID == merchantID && (status == 0 || order.Status == status) {
+		matchesKeyword := keyword == "" || strings.Contains(order.OrderNo, keyword) || strings.Contains(order.ReceiverName, keyword) || strings.Contains(order.ReceiverPhone, keyword)
+		if order.MerchantID == merchantID && (status == 0 || order.Status == status) && matchesKeyword {
 			filtered = append(filtered, order)
 		}
 	}
@@ -179,6 +182,28 @@ func TestMerchantOrderListIsScopedByMerchant(t *testing.T) {
 	}
 	if len(result.List[0].Items) != 1 || result.List[0].Items[0].ProductName != "测试商品" {
 		t.Fatalf("unexpected order items: %+v", result.List[0].Items)
+	}
+}
+
+func TestMerchantOrderListFiltersByKeyword(t *testing.T) {
+	service, _ := newMerchantOrderServiceForTest(model.OrderStatusPaid)
+
+	for _, keyword := range []string{"O202607", "测试用户", "1380000"} {
+		result, err := service.List(context.Background(), 1, dto.MerchantOrderListRequest{Page: 1, PageSize: 10, Keyword: keyword})
+		if err != nil {
+			t.Fatalf("keyword %q returned error: %v", keyword, err)
+		}
+		if result.Total != 1 || len(result.List) != 1 || result.List[0].OrderNo != "O202607100001" {
+			t.Fatalf("keyword %q returned unexpected page: %+v", keyword, result)
+		}
+	}
+
+	result, err := service.List(context.Background(), 1, dto.MerchantOrderListRequest{Page: 1, PageSize: 10, Keyword: "不存在"})
+	if err != nil {
+		t.Fatalf("missing keyword returned error: %v", err)
+	}
+	if result.Total != 0 || len(result.List) != 0 {
+		t.Fatalf("missing keyword should return an empty page: %+v", result)
 	}
 }
 

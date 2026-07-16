@@ -35,14 +35,19 @@ func (r *productRepository) ListOnSale(ctx context.Context, merchantID int64, ca
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.Product{}).
-		Where("merchant_id = ? AND status = ?", merchantID, model.ProductStatusOnSale)
+		Joins("JOIN merchants ON merchants.id = products.merchant_id AND merchants.status = ?", model.StatusEnabled).
+		Where("products.status = ?", model.ProductStatusOnSale)
+
+	if merchantID > 0 {
+		query = query.Where("products.merchant_id = ?", merchantID)
+	}
 
 	if categoryID > 0 {
-		query = query.Where("category_id = ?", categoryID)
+		query = query.Where("products.category_id = ?", categoryID)
 	}
 
 	if keyword != "" {
-		query = query.Where("name LIKE ?", "%"+keyword+"%")
+		query = query.Where("products.name LIKE ?", "%"+keyword+"%")
 	}
 
 	err := query.Count(&total).Error
@@ -50,7 +55,7 @@ func (r *productRepository) ListOnSale(ctx context.Context, merchantID int64, ca
 		return nil, 0, err
 	}
 
-	err = query.Order("id DESC").Offset(offset).Limit(limit).Find(&products).Error
+	err = query.Select("products.*").Order("products.id DESC").Offset(offset).Limit(limit).Find(&products).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -61,8 +66,13 @@ func (r *productRepository) ListOnSale(ctx context.Context, merchantID int64, ca
 // 根据商品ID查询在售商品详情
 func (r *productRepository) FindOnSaleByID(ctx context.Context, merchantID int64, id int64) (*model.Product, error) {
 	var product model.Product
-	err := r.db.WithContext(ctx).
-		Where("merchant_id = ? AND id = ? AND status = ?", merchantID, id, model.ProductStatusOnSale).
+	query := r.db.WithContext(ctx).Model(&model.Product{}).
+		Joins("JOIN merchants ON merchants.id = products.merchant_id AND merchants.status = ?", model.StatusEnabled).
+		Where("products.id = ? AND products.status = ?", id, model.ProductStatusOnSale)
+	if merchantID > 0 {
+		query = query.Where("products.merchant_id = ?", merchantID)
+	}
+	err := query.Select("products.*").
 		First(&product).Error
 	if err != nil {
 		return nil, err
@@ -74,8 +84,12 @@ func (r *productRepository) FindOnSaleByID(ctx context.Context, merchantID int64
 // 查询指定商品的在售SKU列表
 func (r *productRepository) ListEnabledSKUs(ctx context.Context, merchantID int64, productID int64) ([]model.ProductSKU, error) {
 	var skus []model.ProductSKU
-	err := r.db.WithContext(ctx).
-		Where("merchant_id = ? AND product_id = ? AND status = ?", merchantID, productID, model.StatusEnabled).
+	query := r.db.WithContext(ctx).
+		Where("product_id = ? AND status = ?", productID, model.StatusEnabled)
+	if merchantID > 0 {
+		query = query.Where("merchant_id = ?", merchantID)
+	}
+	err := query.
 		Order("id ASC").
 		Find(&skus).Error
 	if err != nil {
@@ -97,10 +111,14 @@ func (r *productRepository) FindMinPrices(ctx context.Context, merchantID int64,
 	}
 
 	var results []Result
-	err := r.db.WithContext(ctx).
+	query := r.db.WithContext(ctx).
 		Model(&model.ProductSKU{}).
 		Select("product_id, MIN(price) as min_price").
-		Where("merchant_id = ? AND product_id IN ? AND status = ?", merchantID, productIDs, model.StatusEnabled).
+		Where("product_id IN ? AND status = ?", productIDs, model.StatusEnabled)
+	if merchantID > 0 {
+		query = query.Where("merchant_id = ?", merchantID)
+	}
+	err := query.
 		Group("product_id").
 		Scan(&results).Error
 	if err != nil {
@@ -121,8 +139,11 @@ func (r *productRepository) FindSKUsByIDs(ctx context.Context, merchantID int64,
 	}
 
 	var skus []model.ProductSKU
-	err := r.db.WithContext(ctx).
-		Where("merchant_id = ? AND id IN ?", merchantID, skuIDs).
+	query := r.db.WithContext(ctx).Where("id IN ?", skuIDs)
+	if merchantID > 0 {
+		query = query.Where("merchant_id = ?", merchantID)
+	}
+	err := query.
 		Find(&skus).Error
 	return skus, err
 }
@@ -133,8 +154,11 @@ func (r *productRepository) FindProductsByIDs(ctx context.Context, merchantID in
 	}
 
 	var products []model.Product
-	err := r.db.WithContext(ctx).
-		Where("merchant_id = ? AND id IN ?", merchantID, productIDs).
+	query := r.db.WithContext(ctx).Where("id IN ?", productIDs)
+	if merchantID > 0 {
+		query = query.Where("merchant_id = ?", merchantID)
+	}
+	err := query.
 		Find(&products).Error
 	return products, err
 }

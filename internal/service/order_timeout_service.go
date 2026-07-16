@@ -7,12 +7,17 @@ import (
 	"time"
 
 	"go-mall/internal/config"
+	"go-mall/internal/dto"
 	"go-mall/internal/model"
 	"go-mall/internal/repository"
 )
 
 type PaymentTimeoutCoordinator interface {
 	PrepareOrderForTimeoutCancel(ctx context.Context, orderID int64) (paid bool, err error)
+}
+
+type TradeTimeoutCanceller interface {
+	Cancel(ctx context.Context, userID int64, tradeID int64) (*dto.TradeResponse, error)
 }
 
 type OrderTimeoutReport struct {
@@ -30,6 +35,7 @@ type OrderTimeoutService interface {
 type orderTimeoutService struct {
 	repo               repository.OrderTimeoutRepository
 	paymentCoordinator PaymentTimeoutCoordinator
+	tradeCanceller     TradeTimeoutCanceller
 	timeout            time.Duration
 	batchSize          int
 }
@@ -38,6 +44,7 @@ func NewOrderTimeoutService(
 	repo repository.OrderTimeoutRepository,
 	paymentCoordinator PaymentTimeoutCoordinator,
 	cfg config.OrderConfig,
+	tradeCanceller ...TradeTimeoutCanceller,
 ) OrderTimeoutService {
 	timeoutMinutes := cfg.PendingPaymentTimeoutMinutes
 	if timeoutMinutes <= 0 {
@@ -50,12 +57,16 @@ func NewOrderTimeoutService(
 	if batchSize > 1000 {
 		batchSize = 1000
 	}
-	return &orderTimeoutService{
+	service := &orderTimeoutService{
 		repo:               repo,
 		paymentCoordinator: paymentCoordinator,
 		timeout:            time.Duration(timeoutMinutes) * time.Minute,
 		batchSize:          batchSize,
 	}
+	if len(tradeCanceller) > 0 {
+		service.tradeCanceller = tradeCanceller[0]
+	}
+	return service
 }
 
 func (s *orderTimeoutService) Run(ctx context.Context, now time.Time) (OrderTimeoutReport, error) {
@@ -64,7 +75,11 @@ func (s *orderTimeoutService) Run(ctx context.Context, now time.Time) (OrderTime
 	if err != nil {
 		return report, err
 	}
-	report.Scanned = len(orderIDs)
+	trades, err := s.repo.ListExpiredPendingTrades(ctx, now.Add(-s.timeout), s.batchSize)
+	if err != nil {
+		return report, err
+	}
+	report.Scanned = len(orderIDs) + len(trades)
 
 	var failures []error
 	for _, orderID := range orderIDs {
@@ -86,6 +101,24 @@ func (s *orderTimeoutService) Run(ctx context.Context, now time.Time) (OrderTime
 			continue
 		}
 		if cancelled {
+			report.Cancelled++
+		} else {
+			report.Skipped++
+		}
+	}
+	for _, trade := range trades {
+		if s.tradeCanceller == nil {
+			report.Failed++
+			failures = append(failures, fmt.Errorf("交易 %d 缺少超时取消协调器", trade.ID))
+			continue
+		}
+		result, err := s.tradeCanceller.Cancel(ctx, trade.UserID, trade.ID)
+		if err != nil {
+			report.Failed++
+			failures = append(failures, fmt.Errorf("交易 %d 超时取消失败: %w", trade.ID, err))
+			continue
+		}
+		if result != nil && result.Status == model.TradeStatusClosed {
 			report.Cancelled++
 		} else {
 			report.Skipped++

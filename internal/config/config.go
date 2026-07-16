@@ -1,17 +1,24 @@
 package config
 
-import "github.com/spf13/viper"
+import (
+	"strings"
+
+	"github.com/spf13/viper"
+)
 
 type Config struct {
-	App     AppConfig     `mapstructure:"app"`
-	Server  ServerConfig  `mapstructure:"server"`
-	MySQL   MySQLConfig   `mapstructure:"mysql"`
-	Redis   RedisConfig   `mapstructure:"redis"`
-	Log     LogConfig     `mapstructure:"log"`
-	JWT     JWTConfig     `mapstructure:"jwt"`
-	Payment PaymentConfig `mapstructure:"payment"`
-	Storage StorageConfig `mapstructure:"storage"`
-	Order   OrderConfig   `mapstructure:"order"`
+	App           AppConfig           `mapstructure:"app"`
+	Server        ServerConfig        `mapstructure:"server"`
+	MySQL         MySQLConfig         `mapstructure:"mysql"`
+	Redis         RedisConfig         `mapstructure:"redis"`
+	Log           LogConfig           `mapstructure:"log"`
+	JWT           JWTConfig           `mapstructure:"jwt"`
+	Auth          AuthConfig          `mapstructure:"auth"`
+	Payment       PaymentConfig       `mapstructure:"payment"`
+	Storage       StorageConfig       `mapstructure:"storage"`
+	Order         OrderConfig         `mapstructure:"order"`
+	Settlement    SettlementConfig    `mapstructure:"settlement"`
+	Observability ObservabilityConfig `mapstructure:"observability"`
 }
 
 type OrderConfig struct {
@@ -23,14 +30,22 @@ type OrderConfig struct {
 	CompleteBatchSize            int  `mapstructure:"complete_batch_size"`
 }
 
+type SettlementConfig struct {
+	Enabled   bool `mapstructure:"enabled"`
+	HoldDays  int  `mapstructure:"hold_days"`
+	BatchSize int  `mapstructure:"batch_size"`
+}
+
 type AppConfig struct {
 	AutoMigrate bool `mapstructure:"auto_migrate"`
 	SeedData    bool `mapstructure:"seed_data"`
 }
 
 type ServerConfig struct {
-	Port int    `mapstructure:"port"`
-	Mode string `mapstructure:"mode"`
+	Port               int      `mapstructure:"port"`
+	Mode               string   `mapstructure:"mode"`
+	TrustedProxies     []string `mapstructure:"trusted_proxies"`
+	CORSAllowedOrigins []string `mapstructure:"cors_allowed_origins"`
 }
 
 type MySQLConfig struct {
@@ -51,7 +66,8 @@ type RedisConfig struct {
 }
 
 type LogConfig struct {
-	Level string `mapstructure:"level"`
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
 }
 
 type JWTConfig struct {
@@ -61,6 +77,17 @@ type JWTConfig struct {
 	MerchantAccessSecret     string `mapstructure:"merchant_access_secret"`
 	MerchantAccessTTLMinutes int    `mapstructure:"merchant_access_ttl_minutes"`
 	MerchantRefreshTTLHours  int    `mapstructure:"merchant_refresh_ttl_hours"`
+}
+
+type AuthConfig struct {
+	// UnsafeWechatOpenIDLoginEnabled 仅用于本地联调。正式微信登录必须由服务端使用 code 换取 openid。
+	UnsafeWechatOpenIDLoginEnabled bool `mapstructure:"unsafe_wechat_open_id_login_enabled"`
+	LoginRateLimitPerMinute        int  `mapstructure:"login_rate_limit_per_minute"`
+	RefreshRateLimitPerMinute      int  `mapstructure:"refresh_rate_limit_per_minute"`
+}
+
+type ObservabilityConfig struct {
+	MetricsEnabled bool `mapstructure:"metrics_enabled"`
 }
 
 type StorageConfig struct {
@@ -85,7 +112,15 @@ type QiniuStorageConfig struct {
 }
 
 type PaymentConfig struct {
-	Alipay AlipayConfig `mapstructure:"alipay"`
+	MockEnabled bool         `mapstructure:"mock_enabled"`
+	Alipay      AlipayConfig `mapstructure:"alipay"`
+	Refund      RefundConfig `mapstructure:"refund"`
+}
+
+type RefundConfig struct {
+	ReconcileEnabled     bool `mapstructure:"reconcile_enabled"`
+	RetryIntervalMinutes int  `mapstructure:"retry_interval_minutes"`
+	ReconcileBatchSize   int  `mapstructure:"reconcile_batch_size"`
 }
 
 type AlipayConfig struct {
@@ -123,23 +158,42 @@ func Load(path string) (*Config, error) {
 	// 使用 Viper 加载配置文件
 	v := viper.New()
 	v.SetConfigFile(path)
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.mode", "debug")
+	v.SetDefault("server.trusted_proxies", []string{"127.0.0.1", "::1"})
+	v.SetDefault("server.cors_allowed_origins", []string{})
 	v.SetDefault("app.auto_migrate", false)
 	v.SetDefault("app.seed_data", false)
 	v.SetDefault("storage.max_image_size_mb", 10)
 	v.SetDefault("storage.path_prefix", "go-mall")
 	v.SetDefault("jwt.merchant_access_ttl_minutes", 120)
 	v.SetDefault("jwt.merchant_refresh_ttl_hours", 168)
+	v.SetDefault("auth.unsafe_wechat_open_id_login_enabled", false)
+	v.SetDefault("auth.login_rate_limit_per_minute", 20)
+	v.SetDefault("auth.refresh_rate_limit_per_minute", 60)
+	v.SetDefault("log.format", "json")
+	v.SetDefault("observability.metrics_enabled", true)
+	v.SetDefault("payment.mock_enabled", false)
 	v.SetDefault("payment.alipay.sandbox", true)
 	v.SetDefault("payment.alipay.page.product_code", "FAST_INSTANT_TRADE_PAY")
 	v.SetDefault("payment.alipay.page.timeout_express", "15m")
 	v.SetDefault("payment.alipay.wap.product_code", "QUICK_WAP_WAY")
 	v.SetDefault("payment.alipay.wap.timeout_express", "15m")
+	v.SetDefault("payment.refund.reconcile_enabled", false)
+	v.SetDefault("payment.refund.retry_interval_minutes", 5)
+	v.SetDefault("payment.refund.reconcile_batch_size", 100)
 	v.SetDefault("order.pending_payment_timeout_minutes", 15)
 	v.SetDefault("order.cancel_batch_size", 100)
 	v.SetDefault("order.cancel_expired_enabled", false)
 	v.SetDefault("order.auto_complete_enabled", false)
 	v.SetDefault("order.shipped_auto_complete_days", 10)
 	v.SetDefault("order.complete_batch_size", 100)
+	v.SetDefault("settlement.enabled", false)
+	v.SetDefault("settlement.hold_days", 7)
+	v.SetDefault("settlement.batch_size", 100)
+	if err := v.BindEnv("server.mode", "GIN_MODE"); err != nil {
+		return nil, err
+	}
 
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -149,5 +203,6 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
+	cfg.Server.Mode = strings.ToLower(strings.TrimSpace(cfg.Server.Mode))
 	return &cfg, nil
 }

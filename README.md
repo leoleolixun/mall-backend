@@ -1,10 +1,10 @@
 # go-mall backend
 
-Go 单商户商城后端，当前用于学习和实现小程序/PC 商城 MVP。项目采用分层结构，已包含商品、用户、地址、购物车、订单、支付等基础模块，并接入支付宝 PC 网页支付。
+Go 模块化商城后端，当前用于学习和实现 PC/H5/小程序商城。项目采用分层结构，已包含多商户目录、购物车、交易拆单、交易级支付分配、订单履约、售后退款和商户结算账本，并接入支付宝 PC/H5 支付能力。
 
 ## 技术栈
 
-- Go 1.25+
+- Go 1.25.12+
 - Gin
 - GORM
 - MySQL
@@ -51,12 +51,44 @@ cp config.example.yaml config.yaml
 
 修改 `config.yaml` 中的 MySQL、Redis、JWT、支付宝等配置。
 
+生产环境必须保持以下开发开关为 `false`：
+
+```yaml
+auth:
+  unsafe_wechat_open_id_login_enabled: false
+payment:
+  mock_enabled: false
+```
+
+当前微信 `open_id` 直登只用于本地联调，`release` 模式不会注册该路由。正式小程序登录需要由前端提交 `wx.login` 返回的 `code`，后端通过微信 `code2session` 换取 `openid`。
+
+服务启动时会校验生产配置：买家和商家 JWT 密钥必须不同、长度至少 32 字节，且不能使用 `change_me` 等示例值。`release` 模式还会拒绝自动迁移、种子数据、模拟支付、不安全微信登录以及支付宝沙箱配置。服务器应设置：
+
+```yaml
+server:
+  mode: release
+app:
+  auto_migrate: false
+  seed_data: false
+```
+
+环境变量 `GIN_MODE` 会覆盖 `server.mode`；当前 systemd 使用 `GIN_MODE=release` 时同样会触发上述校验。
+
+只检查配置而不连接 MySQL、Redis，可以运行：
+
+```bash
+GIN_MODE=release go run ./cmd/check-config
+```
+
+部署 workflow 会先在服务器执行同样的检查，校验通过后才替换正式二进制并执行数据库迁移。
+
 安装依赖并检查：
 
 ```bash
 go mod tidy
 go test ./...
 go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 ```
 
 执行数据库迁移：
@@ -178,8 +210,8 @@ unset MERCHANT_ACCOUNT_PASSWORD
 
 | 角色 | 主要权限 |
 | --- | --- |
-| `owner` | 全部商家后台权限，可管理所有员工角色 |
-| `admin` | 全部业务权限，可管理运营、销售和库管账号，不能管理店主或其他管理员 |
+| `owner` | 全部商家后台权限，可查看本商户结算，可管理所有员工角色 |
+| `admin` | 全部业务权限和本商户结算只读权限，可管理运营、销售和库管账号，不能管理店主或其他管理员 |
 | `operator` | 经营概览、订单、发货、商品、库存、上传和顾客查看 |
 | `sales` | 经营概览、订单查看、商品只读和顾客查看 |
 | `warehouse` | 订单查看、发货、商品只读、库存查看与调整 |
@@ -226,6 +258,9 @@ GET  /api/v1/merchant/inventory-alerts
 PUT  /api/v1/merchant/inventory/skus/{sku_id}/stock
 GET  /api/v1/merchant/dashboard/overview
 GET  /api/v1/merchant/dashboard/analytics
+GET  /api/v1/merchant/settlement-entries
+GET  /api/v1/merchant/settlements
+GET  /api/v1/merchant/settlements/{id}
 ```
 
 商品创建后默认为草稿。至少创建一个价格大于 0 的启用 SKU 后才能上架；上架商品不能删除或禁用最后一个可售 SKU。分类、商品和 SKU 都使用软删除，删除商品前必须先下架。
@@ -303,7 +338,7 @@ unset MERCHANT_PASSWORD
 }
 ```
 
-当前 MVP 的买家订单流程停在“已发货”，暂不开放物流轨迹查询和确认收货接口。商家订单详情仍会返回配送类型、发货时间以及普通快递的公司和运单号，方便后台管理。
+买家可以查询订单的基础物流信息，并主动确认收货。普通快递返回物流公司和运单号，商家自行配送返回配送类型和发货时间；当前不接入第三方实时快递轨迹。
 
 ## 支付流程
 
@@ -317,13 +352,13 @@ Content-Type: application/json
 
 ```json
 {
-  "order_id": 1,
+  "trade_id": 1001,
   "pay_channel": "alipay",
   "pay_scene": "page"
 }
 ```
 
-响应中的 `data.pay_params.pay_url` 是支付宝 PC 网页支付跳转地址。
+`order_id` 和 `trade_id` 必须且只能填写一个。新结算流程统一使用 `trade_id`，后端为整张交易创建一张支付单，并为每张商户子订单创建不可变支付分配；`order_id` 只兼容历史单订单交易。响应中的 `data.pay_params.pay_url` 是支付宝 PC 网页支付跳转地址，H5 使用 `pay_scene: wap`。
 
 支付宝异步通知接口：
 
@@ -331,7 +366,7 @@ Content-Type: application/json
 POST /api/v1/payments/alipay/notify
 ```
 
-该接口不使用 JWT。后端会通过支付宝签名验签、`app_id`、支付单号和金额校验后，在事务中更新支付单与订单状态。
+该接口不使用 JWT。后端会通过支付宝签名验签、`app_id`、支付单号和金额校验后，在事务中更新支付单、交易和全部子订单状态。
 
 支付完成页可以主动同步支付宝状态，避免只依赖异步通知：
 
@@ -340,7 +375,7 @@ POST /api/v1/payments/{payment_no}/sync
 Authorization: Bearer <access_token>
 ```
 
-只有当前用户自己的支付宝支付单可以同步。后端会调用 `alipay.trade.query`，校验支付单号和金额后更新支付单与订单。
+只有当前用户自己的支付宝支付单可以同步。后端会调用 `alipay.trade.query`，校验支付单号和金额后更新支付单、交易与子订单。
 
 ## 超时订单取消
 
@@ -389,9 +424,43 @@ sudo journalctl -u go-mall-complete-shipped-orders.service -n 100 --no-pager
 
 任务只处理仍处于“已发货”的订单，并同时写入订单完成时间和物流签收时间。首次部署保持关闭，验证查询范围后再开启。
 
+## 退款主动查询与对账
+
+支付宝退款只有明确返回资金已发生变化时才标记成功。网络超时、限流或渠道状态不明确时，退款单保持“退款结果确认中”，不会直接标记失败。后续查询和重试始终复用原 `refund_no` 作为支付宝 `out_request_no`，避免重复退款。
+
+首次部署保持自动对账关闭：
+
+```yaml
+payment:
+  refund:
+    reconcile_enabled: false
+    retry_interval_minutes: 5
+    reconcile_batch_size: 100
+```
+
+商家可以手动同步单笔退款：
+
+```http
+POST /api/v1/merchant/after-sales/:id/refund/sync
+Authorization: Bearer <merchant_access_token>
+```
+
+也可以在服务器手动运行批量对账：
+
+```bash
+./bin/go-mall-reconcile-refunds
+```
+
+部署 workflow 会安装 `go-mall-reconcile-refunds.timer`，每五分钟检查一次到期的待确认退款。确认支付宝退款权限和日志正常后，再把 `reconcile_enabled` 改为 `true`：
+
+```bash
+sudo systemctl list-timers go-mall-reconcile-refunds.timer
+sudo journalctl -u go-mall-reconcile-refunds.service -n 100 --no-pager
+```
+
 ## 数据库迁移
 
-本项目使用 GORM AutoMigrate。生产部署建议显式执行迁移命令：
+M0-M7 的既有模型仍由 GORM AutoMigrate 维护：
 
 ```bash
 go run ./cmd/migrate
@@ -402,6 +471,43 @@ CI/CD 中会构建 `go-mall-migrate`，部署时执行：
 ```bash
 ./bin/go-mall-migrate
 ```
+
+从 M8 开始，交易、支付分配和结算结构使用带 checksum 的版本化 SQL，不允许继续交给 AutoMigrate。查看和校验迁移历史：
+
+```bash
+./bin/go-mall-schema-migrate -command status
+./bin/go-mall-schema-migrate -command verify
+```
+
+只允许先在备份恢复出的同版本副本执行。确认备份、DDL 时间和回滚策略后，显式开启 schema 写入：
+
+```bash
+MALL_ALLOW_SCHEMA_MIGRATION=1 \
+  ./bin/go-mall-schema-migrate -command up
+
+./bin/go-mall-backfill-trades -command source
+
+MALL_ALLOW_M8_BACKFILL=1 \
+  ./bin/go-mall-backfill-trades -command backfill -batch-size 100
+
+./bin/go-mall-backfill-trades -command verify
+```
+
+迁移运行器使用 MySQL 会话锁、`dirty` 标记和 SHA-256 checksum。已执行的 SQL 文件禁止修改。`down` 只用于隔离环境演练，并且需要 `MALL_ALLOW_SCHEMA_ROLLBACK=1`；生产回填后采用向前兼容回退旧二进制，不删除新表或兼容字段。
+
+CI/CD 会打包 `go-mall-schema-migrate`、`go-mall-backfill-trades` 和 `go-mall-generate-settlement`，但不会自动执行 M8 schema、历史回填或周期结算。操作顺序、核对项和故障处理见 [运行、监控与回滚手册](docs/operations-runbook.md)。
+
+M8-D 已实现一张交易对应一张支付单、按子订单生成不可变支付分配、退款冲正和商户结算账本。首次结算必须人工执行，并先在生产备份副本 dry-run：
+
+```bash
+./bin/go-mall-generate-settlement \
+  -config config.yaml \
+  -merchant-id 1 \
+  -period-start 2026-07-01T00:00:00+08:00 \
+  -period-end 2026-08-01T00:00:00+08:00
+```
+
+只有 `settlement.enabled: true` 时命令才会运行。它会先幂等补记已完成订单、历史成功退款和遗漏佣金流水，再生成周期结算单；当前不会自动确认或实际打款。工程验收证据见 [M8-D 交易支付与结算验收记录](docs/m8-d-payment-settlement-acceptance-2026-07-16.md)。
 
 ## CI/CD
 
@@ -421,14 +527,35 @@ CI/CD 中会构建 `go-mall-migrate`，部署时执行：
 部署时才会执行测试、构建和发布：
 
 ```text
-go test
+go test ./...
+go test -race ./internal/pricing ./internal/middleware ./pkg/jwt
 go vet
-build server/migrate/create-merchant-account/cancel-expired-orders/complete-shipped-orders
+govulncheck（可达漏洞必须为 0）
+build server/check-config/migrate/schema-migrate/backfill-trades/create-merchant-account/cancel-expired-orders/complete-shipped-orders/reconcile-refunds/generate-settlement
 上传服务器
 执行数据库迁移
 重启 systemd 服务
 检查 /health
+检查 Swagger、OpenAPI、认证保护、request_id 和 /metrics
 ```
+
+完整的生产配置、监控、日志轮转、性能基线、故障处理和回滚步骤见 [运行、监控与回滚手册](docs/operations-runbook.md)。Prometheus 告警规则模板位于 `deploy/monitoring/prometheus-rules.yml`。
+
+当前只读性能基线及尚未在生产执行的订单写压测边界见 [2026-07-16 性能基线](docs/performance-baseline-2026-07-16.md)。
+
+## 可观察性与接口安全
+
+每个 HTTP 响应都会返回 `X-Request-ID`，结构化日志会记录同一个 `request_id`、标准化路由、状态码、耗时、用户/商户以及白名单内的订单或支付标识。日志不会记录密码、Token 或密钥。
+
+本机指标地址：
+
+```text
+http://127.0.0.1:8080/metrics
+```
+
+指标包含请求量与 P95 所需耗时直方图、5xx、并发请求、支付回调失败、待支付订单和未知退款积压。`/metrics` 只供内网 Prometheus 采集，不应通过 Nginx 暴露到公网。
+
+认证接口同时按客户端 IP 限流。超限返回 HTTP `429`、业务码 `42900`、`Retry-After` 和剩余额度响应头；Redis 故障时认证入口返回 `503`，避免在限流失效时放开暴力尝试。正式环境只信任配置中的反向代理，并仅允许精确配置的跨域 Origin。
 
 触发部署示例：
 

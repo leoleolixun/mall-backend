@@ -29,7 +29,8 @@ func main() {
 	paymentRepo := repository.NewPaymentRepository(db)
 	paymentService := service.NewPaymentService(paymentRepo, cfg.Payment)
 	timeoutRepo := repository.NewOrderTimeoutRepository(db)
-	timeoutService := service.NewOrderTimeoutService(timeoutRepo, paymentService, cfg.Order)
+	tradeService := service.NewTradeService(repository.NewTradeRepository(db), nil, paymentService)
+	timeoutService := service.NewOrderTimeoutService(timeoutRepo, paymentService, cfg.Order, tradeService)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()

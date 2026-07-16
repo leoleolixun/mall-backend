@@ -12,7 +12,7 @@ import (
 )
 
 type CouponService interface {
-	Available(ctx context.Context, userID int64) ([]dto.CouponResponse, error)
+	Available(ctx context.Context, userID, merchantID int64) ([]dto.CouponResponse, error)
 	Claim(ctx context.Context, userID, couponID int64) (*dto.UserCouponResponse, error)
 	Mine(ctx context.Context, userID int64, status int) ([]dto.UserCouponResponse, error)
 	MerchantList(ctx context.Context, merchantID int64, req dto.CouponListRequest) (*dto.PageResponse[dto.CouponResponse], error)
@@ -57,8 +57,18 @@ func userCouponResponse(value model.UserCoupon, coupon model.Coupon) dto.UserCou
 	return dto.UserCouponResponse{ID: value.ID, Status: value.Status, StatusText: userCouponStatusText(value.Status), ClaimedAt: value.ClaimedAt.Format(time.RFC3339), UsedAt: stringTime(value.UsedAt), OrderID: value.OrderID, Coupon: couponResponse(coupon)}
 }
 
-func (s *couponService) Available(ctx context.Context, userID int64) ([]dto.CouponResponse, error) {
-	values, counts, err := s.repo.ListAvailable(ctx, defaultMerchantID, userID, time.Now())
+func (s *couponService) Available(ctx context.Context, userID, merchantID int64) ([]dto.CouponResponse, error) {
+	if merchantID <= 0 {
+		return nil, fmt.Errorf("商户 ID 不合法")
+	}
+	enabled, err := s.repo.IsMerchantEnabled(ctx, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, fmt.Errorf("商户不存在或已停用")
+	}
+	values, counts, err := s.repo.ListAvailable(ctx, merchantID, userID, time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +92,11 @@ func (s *couponService) Claim(ctx context.Context, userID, couponID int64) (*dto
 			return fmt.Errorf("优惠券不存在")
 		}
 		now := time.Now()
-		if value.MerchantID != defaultMerchantID || value.Status != model.CouponStatusActive || now.Before(value.StartAt) || !now.Before(value.EndAt) {
+		merchantEnabled, err := repo.IsMerchantEnabled(ctx, value.MerchantID)
+		if err != nil {
+			return err
+		}
+		if value.MerchantID <= 0 || !merchantEnabled || value.Status != model.CouponStatusActive || now.Before(value.StartAt) || !now.Before(value.EndAt) {
 			return fmt.Errorf("优惠券当前不可领取")
 		}
 		count, err := repo.CountClaimedByUser(ctx, value.ID, userID)
@@ -95,6 +109,7 @@ func (s *couponService) Claim(ctx context.Context, userID, couponID int64) (*dto
 		if err := repo.IncrementClaimed(ctx, value.ID); err != nil {
 			return err
 		}
+		value.ClaimedQuantity++
 		userCoupon = &model.UserCoupon{CouponID: value.ID, UserID: userID, MerchantID: value.MerchantID, Status: model.UserCouponStatusUnused, ClaimedAt: now}
 		if err := repo.CreateUserCoupon(ctx, userCoupon); err != nil {
 			return err
@@ -186,20 +201,31 @@ func (s *couponService) MerchantUpdate(ctx context.Context, merchantID, id int64
 	if err != nil {
 		return nil, err
 	}
-	value, err := s.repo.FindByIDAndMerchantID(ctx, id, merchantID)
+	var updated *model.Coupon
+	err = s.repo.Transaction(ctx, func(repo repository.CouponRepository) error {
+		value, findErr := repo.FindForUpdate(ctx, id)
+		if findErr != nil || value.MerchantID != merchantID {
+			return fmt.Errorf("优惠券不存在")
+		}
+		if input.TotalQuantity < value.ClaimedQuantity {
+			return fmt.Errorf("发行数量不能小于已领取数量")
+		}
+		if value.ClaimedQuantity > 0 && (input.ThresholdAmount != value.ThresholdAmount || input.DiscountAmount != value.DiscountAmount || input.PerUserLimit != value.PerUserLimit || !input.StartAt.Equal(value.StartAt)) {
+			return fmt.Errorf("优惠券已有领取记录，不能修改门槛、优惠金额、限领数量和开始时间")
+		}
+		if value.ClaimedQuantity > 0 && input.EndAt.Before(value.EndAt) {
+			return fmt.Errorf("优惠券已有领取记录，不能缩短结束时间")
+		}
+		value.Name, value.ThresholdAmount, value.DiscountAmount, value.TotalQuantity, value.PerUserLimit, value.Status, value.StartAt, value.EndAt = input.Name, input.ThresholdAmount, input.DiscountAmount, input.TotalQuantity, input.PerUserLimit, input.Status, input.StartAt, input.EndAt
+		if updateErr := repo.Update(ctx, value); updateErr != nil {
+			return updateErr
+		}
+		updated = value
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("优惠券不存在")
-	}
-	if input.TotalQuantity < value.ClaimedQuantity {
-		return nil, fmt.Errorf("发行数量不能小于已领取数量")
-	}
-	if value.ClaimedQuantity > 0 && (input.ThresholdAmount != value.ThresholdAmount || input.DiscountAmount != value.DiscountAmount || input.PerUserLimit != value.PerUserLimit || !input.StartAt.Equal(value.StartAt)) {
-		return nil, fmt.Errorf("优惠券已有领取记录，不能修改门槛、优惠金额、限领数量和开始时间")
-	}
-	value.Name, value.ThresholdAmount, value.DiscountAmount, value.TotalQuantity, value.PerUserLimit, value.Status, value.StartAt, value.EndAt = input.Name, input.ThresholdAmount, input.DiscountAmount, input.TotalQuantity, input.PerUserLimit, input.Status, input.StartAt, input.EndAt
-	if err := s.repo.Update(ctx, value); err != nil {
 		return nil, err
 	}
-	result := couponResponse(*value)
+	result := couponResponse(*updated)
 	return &result, nil
 }

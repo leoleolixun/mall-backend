@@ -1,0 +1,20 @@
+CREATE TABLE trades (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    trade_no VARCHAR(64) NOT NULL,
+    user_id BIGINT NOT NULL,
+    status TINYINT NOT NULL DEFAULT 1,
+    goods_amount BIGINT NOT NULL DEFAULT 0,
+    freight_amount BIGINT NOT NULL DEFAULT 0,
+    discount_amount BIGINT NOT NULL DEFAULT 0,
+    payable_amount BIGINT NOT NULL DEFAULT 0,
+    idempotency_key VARCHAR(64) NOT NULL,
+    paid_at DATETIME(3) NULL,
+    closed_at DATETIME(3) NULL,
+    created_at DATETIME(3) NOT NULL,
+    updated_at DATETIME(3) NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_trades_trade_no (trade_no),
+    UNIQUE KEY uk_trades_user_idempotency (user_id, idempotency_key),
+    KEY idx_trades_user_status_created_id (user_id, status, created_at, id),
+    KEY idx_trades_status_created_id (status, created_at, id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

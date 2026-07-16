@@ -1,28 +1,37 @@
 package router
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
 	"go-mall/internal/config"
 	"go-mall/internal/handler"
 	"go-mall/internal/middleware"
+	"go-mall/internal/observability"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
+	"go.uber.org/zap"
 )
 
 func NewRouter(
 	healthHandler *handler.HealthHandler,
 	categoryHandler *handler.CategoryHandler,
 	productHandler *handler.ProductHandler,
+	merchantHandler *handler.MerchantHandler,
 	authHandler *handler.AuthHandler,
 	addressHandler *handler.AddressHandler,
 	cartHandler *handler.CartHandler,
 	orderHandler *handler.OrderHandler,
+	tradeHandler *handler.TradeHandler,
 	paymentHandler *handler.PaymentHandler,
 	uploadHandler *handler.UploadHandler,
 	afterSaleHandler *handler.AfterSaleHandler,
 	couponHandler *handler.CouponHandler,
+	favoriteHandler *handler.FavoriteHandler,
 	merchantAuthHandler *handler.MerchantAuthHandler,
 	merchantAccountHandler *handler.MerchantAccountHandler,
 	merchantOrderHandler *handler.MerchantOrderHandler,
@@ -30,40 +39,74 @@ func NewRouter(
 	merchantInventoryHandler *handler.MerchantInventoryHandler,
 	merchantDashboardHandler *handler.MerchantDashboardHandler,
 	merchantCustomerHandler *handler.MerchantCustomerHandler,
+	merchantSettlementHandler *handler.MerchantSettlementHandler,
 	merchantAccountLoader middleware.MerchantAccountLoader,
 	redisClient *redis.Client,
 	jwtCfg config.JWTConfig,
-) *gin.Engine {
+	serverCfg config.ServerConfig,
+	authCfg config.AuthConfig,
+	paymentCfg config.PaymentConfig,
+	observabilityCfg config.ObservabilityConfig,
+	log *zap.Logger,
+	metrics *observability.Metrics,
+) (*gin.Engine, error) {
 	r := gin.New()
-
-	r.Use(gin.Logger())
-
-	r.Use(gin.Recovery())
+	if metrics == nil {
+		metrics = observability.NewMetrics(nil)
+	}
+	trustedProxies := serverCfg.TrustedProxies
+	if len(trustedProxies) == 0 {
+		trustedProxies = nil
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		return nil, fmt.Errorf("配置可信代理失败: %w", err)
+	}
+	r.Use(
+		middleware.RequestID(),
+		middleware.RequestLogger(log),
+		metrics.Middleware(),
+		middleware.Recovery(log),
+		middleware.SecurityHeaders(),
+		middleware.CORS(serverCfg.CORSAllowedOrigins),
+	)
 
 	r.GET("/health", healthHandler.Health)
+	if observabilityCfg.MetricsEnabled {
+		// Nginx 不代理该路径；仅供同机 Prometheus 或运维检查使用。
+		r.GET("/metrics", gin.WrapH(metrics.Handler()))
+	}
 	r.StaticFile("/docs/openapi.yaml", "docs/openapi.yaml")
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler, ginSwagger.URL("/docs/openapi.yaml")))
 
 	api := r.Group("/api/v1")
 	{
+		isReleaseMode := gin.Mode() == gin.ReleaseMode || strings.EqualFold(serverCfg.Mode, gin.ReleaseMode)
+		developmentFeaturesEnabled := !isReleaseMode
+
 		api.GET("/categories", categoryHandler.List)
 		api.GET("/products", productHandler.List)
 		api.GET("/products/:id", productHandler.Detail)
 		api.GET("/products/:id/skus", productHandler.SKUs)
+		api.GET("/merchants", merchantHandler.List)
+		api.GET("/merchants/:id", merchantHandler.Detail)
+		api.GET("/merchants/:id/categories", merchantHandler.Categories)
+		api.GET("/merchants/:id/products", merchantHandler.Products)
 		api.POST("/payments/alipay/notify", paymentHandler.AlipayNotify)
 
 		auth := api.Group("/auth")
 		{
-			auth.POST("/register", authHandler.Register)
-			auth.POST("/login/password", authHandler.PasswordLogin)
-			auth.POST("/login/wechat", authHandler.WechatMiniProgramLogin)
-			auth.POST("/refresh", authHandler.Refresh)
+			auth.POST("/register", middleware.IPRateLimit(redisClient, "buyer_register", authCfg.LoginRateLimitPerMinute, time.Minute), authHandler.Register)
+			auth.POST("/login/password", middleware.IPRateLimit(redisClient, "buyer_login", authCfg.LoginRateLimitPerMinute, time.Minute), authHandler.PasswordLogin)
+			if authCfg.UnsafeWechatOpenIDLoginEnabled && developmentFeaturesEnabled {
+				auth.POST("/login/wechat", middleware.IPRateLimit(redisClient, "buyer_wechat_login", authCfg.LoginRateLimitPerMinute, time.Minute), authHandler.WechatMiniProgramLogin)
+			}
+			auth.POST("/refresh", middleware.IPRateLimit(redisClient, "buyer_refresh", authCfg.RefreshRateLimitPerMinute, time.Minute), authHandler.Refresh)
 		}
 
 		merchantAuth := api.Group("/merchant/auth")
 		{
-			merchantAuth.POST("/login", merchantAuthHandler.Login)
-			merchantAuth.POST("/refresh", merchantAuthHandler.Refresh)
+			merchantAuth.POST("/login", middleware.IPRateLimit(redisClient, "merchant_login", authCfg.LoginRateLimitPerMinute, time.Minute), merchantAuthHandler.Login)
+			merchantAuth.POST("/refresh", middleware.IPRateLimit(redisClient, "merchant_refresh", authCfg.RefreshRateLimitPerMinute, time.Minute), merchantAuthHandler.Refresh)
 		}
 
 		merchantProtected := api.Group("/merchant")
@@ -104,10 +147,14 @@ func NewRouter(
 			merchantProtected.GET("/customers/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionCustomerRead), merchantCustomerHandler.Detail)
 			merchantProtected.GET("/after-sales", middleware.RequireMerchantPermission(middleware.MerchantPermissionAfterSaleRead), afterSaleHandler.MerchantList)
 			merchantProtected.POST("/after-sales/:id/approve", middleware.RequireMerchantPermission(middleware.MerchantPermissionAfterSaleWrite), afterSaleHandler.MerchantApprove)
+			merchantProtected.POST("/after-sales/:id/refund/sync", middleware.RequireMerchantPermission(middleware.MerchantPermissionAfterSaleWrite), afterSaleHandler.MerchantSyncRefund)
 			merchantProtected.POST("/after-sales/:id/reject", middleware.RequireMerchantPermission(middleware.MerchantPermissionAfterSaleWrite), afterSaleHandler.MerchantReject)
 			merchantProtected.GET("/coupons", middleware.RequireMerchantPermission(middleware.MerchantPermissionMarketingRead), couponHandler.MerchantList)
 			merchantProtected.POST("/coupons", middleware.RequireMerchantPermission(middleware.MerchantPermissionMarketingWrite), couponHandler.MerchantCreate)
 			merchantProtected.PUT("/coupons/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionMarketingWrite), couponHandler.MerchantUpdate)
+			merchantProtected.GET("/settlement-entries", middleware.RequireMerchantPermission(middleware.MerchantPermissionSettlementRead), merchantSettlementHandler.ListEntries)
+			merchantProtected.GET("/settlements", middleware.RequireMerchantPermission(middleware.MerchantPermissionSettlementRead), merchantSettlementHandler.List)
+			merchantProtected.GET("/settlements/:id", middleware.RequireMerchantPermission(middleware.MerchantPermissionSettlementRead), merchantSettlementHandler.Detail)
 		}
 
 		protected := api.Group("")
@@ -134,13 +181,23 @@ func NewRouter(
 			protected.POST("/orders", orderHandler.Create)
 			protected.GET("/orders/:id", orderHandler.Detail)
 			protected.POST("/orders/:id/cancel", orderHandler.Cancel)
-			protected.POST("/orders/:id/pay", orderHandler.Pay)
+			if paymentCfg.MockEnabled && developmentFeaturesEnabled {
+				protected.POST("/orders/:id/pay", orderHandler.Pay)
+			}
 			protected.POST("/orders/:id/confirm", orderHandler.Confirm)
 			protected.GET("/orders/:id/logistics", orderHandler.Logistics)
 
+			protected.POST("/trades/preview", tradeHandler.Preview)
+			protected.POST("/trades", tradeHandler.Create)
+			protected.GET("/trades", tradeHandler.List)
+			protected.GET("/trades/:id", tradeHandler.Detail)
+			protected.POST("/trades/:id/cancel", tradeHandler.Cancel)
+
 			protected.POST("/payments", paymentHandler.Create)
 			protected.GET("/payments/:payment_no", paymentHandler.Detail)
-			protected.POST("/payments/:payment_no/mock-complete", paymentHandler.MockComplete)
+			if paymentCfg.MockEnabled && developmentFeaturesEnabled {
+				protected.POST("/payments/:payment_no/mock-complete", paymentHandler.MockComplete)
+			}
 			protected.POST("/payments/:payment_no/sync", paymentHandler.Sync)
 
 			protected.POST("/uploads", uploadHandler.Image)
@@ -151,8 +208,11 @@ func NewRouter(
 			protected.GET("/coupons", couponHandler.Available)
 			protected.POST("/coupons/:id/claim", couponHandler.Claim)
 			protected.GET("/me/coupons", couponHandler.Mine)
+			protected.GET("/favorites/products", favoriteHandler.List)
+			protected.POST("/favorites/products", favoriteHandler.Add)
+			protected.DELETE("/favorites/products/:product_id", favoriteHandler.Delete)
 		}
 	}
 
-	return r
+	return r, nil
 }

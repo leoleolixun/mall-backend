@@ -25,6 +25,9 @@ type MerchantClaims struct {
 
 // 生成访问令牌
 func GenerateAccessToken(userID int64, secret string, ttl time.Duration) (string, error) {
+	if secret == "" {
+		return "", fmt.Errorf("买家 JWT 密钥未配置")
+	}
 	claims := Claims{
 		UserID: userID,
 		RegisteredClaims: gojwt.RegisteredClaims{
@@ -40,18 +43,26 @@ func GenerateAccessToken(userID int64, secret string, ttl time.Duration) (string
 
 // 解析访问令牌
 func ParseAccessToken(tokenString string, secret string) (int64, error) {
-	token, err := gojwt.ParseWithClaims(tokenString, &Claims{}, func(token *gojwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*gojwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("无效的签定方法")
-		}
-		return []byte(secret), nil
-	})
+	if secret == "" {
+		return 0, fmt.Errorf("买家 JWT 密钥未配置")
+	}
+	token, err := gojwt.ParseWithClaims(
+		tokenString,
+		&Claims{},
+		func(token *gojwt.Token) (interface{}, error) {
+			if token.Method != gojwt.SigningMethodHS256 {
+				return nil, fmt.Errorf("无效的签名方法")
+			}
+			return []byte(secret), nil
+		},
+		gojwt.WithValidMethods([]string{gojwt.SigningMethodHS256.Alg()}),
+	)
 	if err != nil {
 		return 0, err
 	}
 
 	claims, ok := token.Claims.(*Claims)
-	if !ok || !token.Valid {
+	if !ok || !token.Valid || claims.UserID <= 0 {
 		return 0, fmt.Errorf("token 无效")
 	}
 	return claims.UserID, nil

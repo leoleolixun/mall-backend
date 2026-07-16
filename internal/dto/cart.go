@@ -10,15 +10,18 @@ type UpdateCartItemRequest struct {
 }
 
 type CartItemResponse struct {
-	ProductID   int64  `json:"product_id"`
-	SKUID       int64  `json:"sku_id"`
-	ProductName string `json:"product_name"`
-	SKUName     string `json:"sku_name"`
-	SKUImage    string `json:"sku_image"`
-	Price       int64  `json:"price"`
-	Quantity    int    `json:"quantity"`
-	Subtotal    int64  `json:"subtotal"`
-	Stock       int    `json:"stock"`
-	Available   bool   `json:"available"`
-	Message     string `json:"message,omitempty"`
+	MerchantID   int64  `json:"merchant_id"`
+	MerchantName string `json:"merchant_name"`
+	MerchantLogo string `json:"merchant_logo"`
+	ProductID    int64  `json:"product_id"`
+	SKUID        int64  `json:"sku_id"`
+	ProductName  string `json:"product_name"`
+	SKUName      string `json:"sku_name"`
+	SKUImage     string `json:"sku_image"`
+	Price        int64  `json:"price"`
+	Quantity     int    `json:"quantity"`
+	Subtotal     int64  `json:"subtotal"`
+	Stock        int    `json:"stock"`
+	Available    bool   `json:"available"`
+	Message      string `json:"message,omitempty"`
 }

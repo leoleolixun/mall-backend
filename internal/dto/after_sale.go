@@ -20,14 +20,20 @@ type AfterSaleListRequest struct {
 }
 
 type RefundResponse struct {
-	RefundNo      string  `json:"refund_no"`
-	PayChannel    string  `json:"pay_channel"`
-	Amount        int64   `json:"amount"`
-	Status        int     `json:"status"`
-	StatusText    string  `json:"status_text"`
-	TransactionID string  `json:"transaction_id"`
-	FailureReason string  `json:"failure_reason"`
-	RefundedAt    *string `json:"refunded_at"`
+	TradeID             *int64  `json:"trade_id,omitempty"`
+	PaymentAllocationID *int64  `json:"payment_allocation_id,omitempty"`
+	RefundNo            string  `json:"refund_no"`
+	PayChannel          string  `json:"pay_channel"`
+	Amount              int64   `json:"amount"`
+	Status              int     `json:"status"`
+	StatusText          string  `json:"status_text"`
+	TransactionID       string  `json:"transaction_id"`
+	FailureReason       string  `json:"failure_reason"`
+	LastError           string  `json:"last_error"`
+	RetryCount          int     `json:"retry_count"`
+	LastAttemptAt       *string `json:"last_attempt_at"`
+	NextRetryAt         *string `json:"next_retry_at"`
+	RefundedAt          *string `json:"refunded_at"`
 }
 
 type AfterSaleResponse struct {

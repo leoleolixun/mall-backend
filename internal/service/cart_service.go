@@ -26,14 +26,16 @@ type CartService interface {
 }
 
 type cartService struct {
-	redisClient *redis.Client
-	productRepo repository.ProductRepository
+	redisClient  *redis.Client
+	productRepo  repository.ProductRepository
+	merchantRepo repository.MerchantRepository
 }
 
-func NewCartService(redisClient *redis.Client, productRepo repository.ProductRepository) CartService {
+func NewCartService(redisClient *redis.Client, productRepo repository.ProductRepository, merchantRepo repository.MerchantRepository) CartService {
 	return &cartService{
-		redisClient: redisClient,
-		productRepo: productRepo,
+		redisClient:  redisClient,
+		productRepo:  productRepo,
+		merchantRepo: merchantRepo,
 	}
 }
 
@@ -50,7 +52,7 @@ func (s *cartService) Add(ctx context.Context, userID int64, req dto.AddCartItem
 	if req.Quantity <= 0 {
 		return fmt.Errorf("数量必须大于0")
 	}
-	sku, product, err := s.getSKUAndProduct(ctx, req.SKUID)
+	sku, product, merchant, err := s.getSKUAndProduct(ctx, req.SKUID)
 	if err != nil {
 		return err
 	}
@@ -61,7 +63,7 @@ func (s *cartService) Add(ctx context.Context, userID int64, req dto.AddCartItem
 	}
 
 	newQuantity := currentQuantity + req.Quantity
-	if err := checkCartAvailable(sku, product, newQuantity); err != nil {
+	if err := checkCartAvailable(sku, product, merchant, newQuantity); err != nil {
 		return err
 	}
 
@@ -81,12 +83,12 @@ func (s *cartService) Update(ctx context.Context, userID int64, skuID int64, req
 		return fmt.Errorf("购买数量必须大于 0")
 	}
 
-	sku, product, err := s.getSKUAndProduct(ctx, skuID)
+	sku, product, merchant, err := s.getSKUAndProduct(ctx, skuID)
 	if err != nil {
 		return err
 	}
 
-	if err := checkCartAvailable(sku, product, req.Quantity); err != nil {
+	if err := checkCartAvailable(sku, product, merchant, req.Quantity); err != nil {
 		return err
 	}
 
@@ -130,17 +132,19 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 		skuIDs = append(skuIDs, entry.SKUID)
 	}
 
-	skus, err := s.productRepo.FindSKUsByIDs(ctx, defaultMerchantID, skuIDs)
+	skus, err := s.productRepo.FindSKUsByIDs(ctx, 0, skuIDs)
 	if err != nil {
 		return nil, err
 	}
 
 	skuMap := make(map[int64]model.ProductSKU)
 	productIDSet := make(map[int64]struct{})
+	merchantIDSet := make(map[int64]struct{})
 
 	for _, sku := range skus {
 		skuMap[sku.ID] = sku
 		productIDSet[sku.ProductID] = struct{}{}
+		merchantIDSet[sku.MerchantID] = struct{}{}
 	}
 
 	productIDs := make([]int64, 0, len(productIDSet))
@@ -148,7 +152,7 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 		productIDs = append(productIDs, productID)
 	}
 
-	products, err := s.productRepo.FindProductsByIDs(ctx, defaultMerchantID, productIDs)
+	products, err := s.productRepo.FindProductsByIDs(ctx, 0, productIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +160,20 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 	productMap := make(map[int64]model.Product)
 	for _, product := range products {
 		productMap[product.ID] = product
+		merchantIDSet[product.MerchantID] = struct{}{}
+	}
+
+	merchantIDs := make([]int64, 0, len(merchantIDSet))
+	for merchantID := range merchantIDSet {
+		merchantIDs = append(merchantIDs, merchantID)
+	}
+	merchants, err := s.merchantRepo.FindByIDs(ctx, merchantIDs)
+	if err != nil {
+		return nil, err
+	}
+	merchantMap := make(map[int64]model.Merchant, len(merchants))
+	for _, merchant := range merchants {
+		merchantMap[merchant.ID] = merchant
 	}
 
 	result := make([]dto.CartItemResponse, 0, len(entries))
@@ -173,6 +191,12 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 			result = append(result, item)
 			continue
 		}
+		item.MerchantID = sku.MerchantID
+		merchant, merchantExists := merchantMap[sku.MerchantID]
+		if merchantExists {
+			item.MerchantName = merchant.Name
+			item.MerchantLogo = merchant.Logo
+		}
 
 		product, ok := productMap[sku.ProductID]
 		if !ok {
@@ -187,6 +211,19 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 			result = append(result, item)
 			continue
 		}
+		if product.MerchantID != sku.MerchantID {
+			item.ProductID = product.ID
+			item.ProductName = product.Name
+			item.SKUName = sku.Name
+			item.SKUImage = sku.Image
+			item.Price = sku.Price
+			item.Stock = sku.Stock
+			item.Subtotal = sku.Price * int64(entry.Quantity)
+			item.Available = false
+			item.Message = "商品与 SKU 的商户不一致"
+			result = append(result, item)
+			continue
+		}
 
 		item.ProductID = product.ID
 		item.ProductName = product.Name
@@ -195,12 +232,15 @@ func (s *cartService) List(ctx context.Context, userID int64) ([]dto.CartItemRes
 		item.Price = sku.Price
 		item.Stock = sku.Stock
 		item.Subtotal = sku.Price * int64(entry.Quantity)
-		item.Available, item.Message = getCartItemStatus(sku, product, entry.Quantity)
+		item.Available, item.Message = getCartItemStatus(sku, product, merchant, merchantExists, entry.Quantity)
 
 		result = append(result, item)
 	}
 
 	sort.Slice(result, func(i, j int) bool {
+		if result[i].MerchantID != result[j].MerchantID {
+			return result[i].MerchantID < result[j].MerchantID
+		}
 		return result[i].SKUID < result[j].SKUID
 	})
 
@@ -224,28 +264,35 @@ func (s *cartService) getCurrentQuantity(ctx context.Context, userID int64, skuI
 	return quantity, nil
 }
 
-func (s *cartService) getSKUAndProduct(ctx context.Context, skuID int64) (*model.ProductSKU, *model.Product, error) {
-	skus, err := s.productRepo.FindSKUsByIDs(ctx, defaultMerchantID, []int64{skuID})
+func (s *cartService) getSKUAndProduct(ctx context.Context, skuID int64) (*model.ProductSKU, *model.Product, *model.Merchant, error) {
+	skus, err := s.productRepo.FindSKUsByIDs(ctx, 0, []int64{skuID})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(skus) == 0 {
-		return nil, nil, fmt.Errorf("SKU 不存在")
+		return nil, nil, nil, fmt.Errorf("SKU 不存在")
 	}
 
 	sku := skus[0]
 
-	products, err := s.productRepo.FindProductsByIDs(ctx, defaultMerchantID, []int64{sku.ProductID})
+	products, err := s.productRepo.FindProductsByIDs(ctx, 0, []int64{sku.ProductID})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	if len(products) == 0 {
-		return nil, nil, fmt.Errorf("商品不存在")
+		return nil, nil, nil, fmt.Errorf("商品不存在")
 	}
 
 	product := products[0]
+	if product.MerchantID != sku.MerchantID {
+		return nil, nil, nil, fmt.Errorf("商品与 SKU 的商户不一致")
+	}
+	merchant, err := s.merchantRepo.FindEnabledByID(ctx, sku.MerchantID)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("商户不存在或已停用")
+	}
 
-	return &sku, &product, nil
+	return &sku, &product, merchant, nil
 }
 
 func parseCartEntries(values map[string]string) []cartEntry {
@@ -271,8 +318,8 @@ func parseCartEntries(values map[string]string) []cartEntry {
 	return entries
 }
 
-func checkCartAvailable(sku *model.ProductSKU, product *model.Product, quantity int) error {
-	available, message := getCartItemStatus(*sku, *product, quantity)
+func checkCartAvailable(sku *model.ProductSKU, product *model.Product, merchant *model.Merchant, quantity int) error {
+	available, message := getCartItemStatus(*sku, *product, *merchant, true, quantity)
 	if !available {
 		return errors.New(message)
 	}
@@ -280,7 +327,13 @@ func checkCartAvailable(sku *model.ProductSKU, product *model.Product, quantity 
 	return nil
 }
 
-func getCartItemStatus(sku model.ProductSKU, product model.Product, quantity int) (bool, string) {
+func getCartItemStatus(sku model.ProductSKU, product model.Product, merchant model.Merchant, merchantExists bool, quantity int) (bool, string) {
+	if !merchantExists {
+		return false, "商户不存在"
+	}
+	if merchant.Status != model.StatusEnabled {
+		return false, "商户已停用"
+	}
 	if sku.Status != model.StatusEnabled {
 		return false, "SKU 已下架"
 	}

@@ -45,6 +45,7 @@ const (
 	MerchantPermissionAfterSaleWrite = authorization.MerchantPermissionAfterSaleWrite
 	MerchantPermissionMarketingRead  = authorization.MerchantPermissionMarketingRead
 	MerchantPermissionMarketingWrite = authorization.MerchantPermissionMarketingWrite
+	MerchantPermissionSettlementRead = authorization.MerchantPermissionSettlementRead
 )
 
 type MerchantAccountLoader interface {

@@ -35,22 +35,39 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Race test concurrency-sensitive packages
+        run: go test -race ./internal/pricing ./internal/middleware ./pkg/jwt
+
       - name: Vet
         run: go vet ./...
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
 
       - name: Build Linux binaries
         run: |
           set -euo pipefail
-          mkdir -p release/bin release/docs release/deploy/systemd
+          mkdir -p release/bin release/docs release/deploy/systemd release/deploy/monitoring release/scripts
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-server ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-check-config ./cmd/check-config
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-migrate ./cmd/migrate
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-schema-migrate ./cmd/schema-migrate
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-backfill-trades ./cmd/backfill-trades
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-create-merchant-account ./cmd/create-merchant-account
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-cancel-expired-orders ./cmd/cancel-expired-orders
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-complete-shipped-orders ./cmd/complete-shipped-orders
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-reconcile-refunds ./cmd/reconcile-refunds
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o release/bin/go-mall-generate-settlement ./cmd/generate-settlement
           cp docs/openapi.yaml release/docs/openapi.yaml
+          cp docs/operations-runbook.md release/docs/operations-runbook.md
+          cp deploy/systemd/go-mall.service release/deploy/systemd/go-mall.service
           cp deploy/systemd/go-mall-cancel-expired-orders.* release/deploy/systemd/
           cp deploy/systemd/go-mall-complete-shipped-orders.* release/deploy/systemd/
-          chmod +x release/bin/go-mall-server release/bin/go-mall-migrate release/bin/go-mall-create-merchant-account release/bin/go-mall-cancel-expired-orders release/bin/go-mall-complete-shipped-orders
+          cp deploy/systemd/go-mall-reconcile-refunds.* release/deploy/systemd/
+          cp deploy/monitoring/prometheus-rules.yml release/deploy/monitoring/prometheus-rules.yml
+          cp scripts/post-deploy-smoke.sh release/scripts/post-deploy-smoke.sh
+          chmod +x release/bin/go-mall-server release/bin/go-mall-check-config release/bin/go-mall-migrate release/bin/go-mall-schema-migrate release/bin/go-mall-backfill-trades release/bin/go-mall-create-merchant-account release/bin/go-mall-cancel-expired-orders release/bin/go-mall-complete-shipped-orders release/bin/go-mall-reconcile-refunds release/bin/go-mall-generate-settlement
+          chmod +x release/scripts/post-deploy-smoke.sh
 
       - name: Package release
         run: |
@@ -83,7 +100,7 @@ jobs:
             SUDO="sudo"
           fi
 
-          $SUDO mkdir -p "${{ env.DEPLOY_DIR }}/bin" "${{ env.DEPLOY_DIR }}/docs"
+          $SUDO mkdir -p "${{ env.DEPLOY_DIR }}/bin" "${{ env.DEPLOY_DIR }}/docs" "${{ env.DEPLOY_DIR }}/scripts" "${{ env.DEPLOY_DIR }}/rollback"
           if [ ! -f "${{ env.DEPLOY_DIR }}/config.yaml" ]; then
             echo "missing ${{ env.DEPLOY_DIR }}/config.yaml"
             exit 1
@@ -92,28 +109,69 @@ jobs:
           mkdir -p /tmp/go-mall-backend-release
           tar -xzf "/tmp/${{ env.RELEASE_ARCHIVE }}" -C /tmp/go-mall-backend-release
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-server "${{ env.DEPLOY_DIR }}/bin/go-mall-server.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-check-config "${{ env.DEPLOY_DIR }}/bin/go-mall-check-config.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-migrate "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-schema-migrate "${{ env.DEPLOY_DIR }}/bin/go-mall-schema-migrate.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-backfill-trades "${{ env.DEPLOY_DIR }}/bin/go-mall-backfill-trades.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-create-merchant-account "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-cancel-expired-orders "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders.new"
           $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-complete-shipped-orders "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-reconcile-refunds "${{ env.DEPLOY_DIR }}/bin/go-mall-reconcile-refunds.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/bin/go-mall-generate-settlement "${{ env.DEPLOY_DIR }}/bin/go-mall-generate-settlement.new"
+          $SUDO install -m 0755 /tmp/go-mall-backend-release/scripts/post-deploy-smoke.sh "${{ env.DEPLOY_DIR }}/scripts/post-deploy-smoke.sh.new"
+          cd "${{ env.DEPLOY_DIR }}"
+          $SUDO env GIN_MODE=release ./bin/go-mall-check-config.new
+
+          BACKUP_DIR="${{ env.DEPLOY_DIR }}/rollback/${{ github.sha }}"
+          $SUDO mkdir -p "$BACKUP_DIR/bin"
+          for binary in go-mall-server go-mall-check-config go-mall-migrate go-mall-schema-migrate go-mall-backfill-trades go-mall-create-merchant-account go-mall-cancel-expired-orders go-mall-complete-shipped-orders go-mall-reconcile-refunds go-mall-generate-settlement; do
+            if [ -f "${{ env.DEPLOY_DIR }}/bin/$binary" ]; then
+              $SUDO cp -a "${{ env.DEPLOY_DIR }}/bin/$binary" "$BACKUP_DIR/bin/$binary"
+            fi
+          done
+          rollback() {
+            status=$?
+            trap - ERR
+            if [ "$status" -ne 0 ] && [ -f "$BACKUP_DIR/bin/go-mall-server" ]; then
+              echo "deployment failed, restoring previous binaries"
+              $SUDO cp -a "$BACKUP_DIR/bin/." "${{ env.DEPLOY_DIR }}/bin/"
+              $SUDO systemctl restart "${{ env.SERVICE_NAME }}" || true
+            fi
+            exit "$status"
+          }
+          trap rollback ERR
+
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-server.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-server"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-check-config.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-check-config"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-migrate"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-schema-migrate.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-schema-migrate"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-backfill-trades.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-backfill-trades"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-create-merchant-account"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-cancel-expired-orders"
           $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-complete-shipped-orders"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-reconcile-refunds.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-reconcile-refunds"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/bin/go-mall-generate-settlement.new" "${{ env.DEPLOY_DIR }}/bin/go-mall-generate-settlement"
+          $SUDO mv -f "${{ env.DEPLOY_DIR }}/scripts/post-deploy-smoke.sh.new" "${{ env.DEPLOY_DIR }}/scripts/post-deploy-smoke.sh"
           $SUDO cp -a /tmp/go-mall-backend-release/docs/. "${{ env.DEPLOY_DIR }}/docs/"
+          $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall.service /etc/systemd/system/go-mall.service
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-cancel-expired-orders.service /etc/systemd/system/go-mall-cancel-expired-orders.service
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-cancel-expired-orders.timer /etc/systemd/system/go-mall-cancel-expired-orders.timer
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-complete-shipped-orders.service /etc/systemd/system/go-mall-complete-shipped-orders.service
           $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-complete-shipped-orders.timer /etc/systemd/system/go-mall-complete-shipped-orders.timer
+          $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-reconcile-refunds.service /etc/systemd/system/go-mall-reconcile-refunds.service
+          $SUDO install -m 0644 /tmp/go-mall-backend-release/deploy/systemd/go-mall-reconcile-refunds.timer /etc/systemd/system/go-mall-reconcile-refunds.timer
           $SUDO systemctl daemon-reload
+
+          $SUDO ./bin/go-mall-migrate
           $SUDO systemctl enable --now go-mall-cancel-expired-orders.timer
           $SUDO systemctl enable --now go-mall-complete-shipped-orders.timer
-
-          cd "${{ env.DEPLOY_DIR }}"
-          $SUDO ./bin/go-mall-migrate
+          $SUDO systemctl enable --now go-mall-reconcile-refunds.timer
+          $SUDO systemctl enable "${{ env.SERVICE_NAME }}"
           $SUDO systemctl restart "${{ env.SERVICE_NAME }}"
           sleep 2
-          curl -f http://127.0.0.1:8080/health
+          $SUDO systemctl is-active --quiet "${{ env.SERVICE_NAME }}"
+          BASE_URL=http://127.0.0.1:8080 CHECK_METRICS=true "${{ env.DEPLOY_DIR }}/scripts/post-deploy-smoke.sh"
+          trap - ERR
+          $SUDO find "${{ env.DEPLOY_DIR }}/rollback" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | tail -n +6 | cut -d' ' -f2- | xargs -r $SUDO rm -rf
           rm -f "/tmp/${{ env.RELEASE_ARCHIVE }}"
           EOF

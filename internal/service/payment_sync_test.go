@@ -14,16 +14,32 @@ import (
 )
 
 type fakePaymentRepository struct {
-	payment model.Payment
-	order   model.Order
+	payment         model.Payment
+	order           model.Order
+	trade           model.Trade
+	tradeOrders     []model.Order
+	allocations     []model.PaymentAllocation
+	pendingPayments []model.Payment
+	createCalls     int
 }
+
+func paymentTestInt64(value int64) *int64 { return &value }
 
 func (r *fakePaymentRepository) Transaction(_ context.Context, fn func(repo repository.PaymentRepository) error) error {
 	return fn(r)
 }
 
 func (r *fakePaymentRepository) Create(_ context.Context, payment *model.Payment) error {
+	r.createCalls++
+	if payment.ID == 0 {
+		payment.ID = int64(r.createCalls)
+	}
 	r.payment = *payment
+	return nil
+}
+
+func (r *fakePaymentRepository) CreateAllocations(_ context.Context, allocations []model.PaymentAllocation) error {
+	r.allocations = append([]model.PaymentAllocation(nil), allocations...)
 	return nil
 }
 
@@ -33,6 +49,10 @@ func (r *fakePaymentRepository) FindByPaymentNo(_ context.Context, paymentNo str
 	}
 	copy := r.payment
 	return &copy, nil
+}
+
+func (r *fakePaymentRepository) FindByPaymentNoForUpdate(ctx context.Context, paymentNo string) (*model.Payment, error) {
+	return r.FindByPaymentNo(ctx, paymentNo)
 }
 
 func (r *fakePaymentRepository) FindByPaymentNoAndUserID(_ context.Context, paymentNo string, userID int64) (*model.Payment, error) {
@@ -50,7 +70,7 @@ func (r *fakePaymentRepository) FindLatestByOrderIDUserIDChannelScene(
 	payChannel string,
 	payScene string,
 ) (*model.Payment, error) {
-	if r.payment.OrderID != orderID || r.payment.UserID != userID || r.payment.PayChannel != payChannel || r.payment.PayScene != payScene {
+	if r.payment.OrderID == nil || *r.payment.OrderID != orderID || r.payment.UserID != userID || r.payment.PayChannel != payChannel || r.payment.PayScene != payScene {
 		return nil, gorm.ErrRecordNotFound
 	}
 	copy := r.payment
@@ -58,18 +78,53 @@ func (r *fakePaymentRepository) FindLatestByOrderIDUserIDChannelScene(
 }
 
 func (r *fakePaymentRepository) FindPendingByOrderID(_ context.Context, orderID int64) ([]model.Payment, error) {
-	if r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPending {
+	if r.pendingPayments != nil {
+		payments := make([]model.Payment, 0, len(r.pendingPayments))
+		for _, payment := range r.pendingPayments {
+			if payment.OrderID != nil && *payment.OrderID == orderID && payment.Status == model.PaymentStatusPending {
+				payments = append(payments, payment)
+			}
+		}
+		return payments, nil
+	}
+	if r.payment.OrderID != nil && *r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPending {
 		return []model.Payment{r.payment}, nil
 	}
 	return []model.Payment{}, nil
 }
 
 func (r *fakePaymentRepository) FindPaidByOrderID(_ context.Context, orderID int64) (*model.Payment, error) {
-	if r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPaid {
+	if r.payment.OrderID != nil && *r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPaid {
 		copy := r.payment
 		return &copy, nil
 	}
 	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakePaymentRepository) FindPendingByTradeID(_ context.Context, tradeID int64) ([]model.Payment, error) {
+	if r.payment.TradeID != nil && *r.payment.TradeID == tradeID && r.payment.Status == model.PaymentStatusPending {
+		return []model.Payment{r.payment}, nil
+	}
+	return []model.Payment{}, nil
+}
+
+func (r *fakePaymentRepository) FindPaidByTradeID(_ context.Context, tradeID int64) (*model.Payment, error) {
+	if r.payment.TradeID != nil && *r.payment.TradeID == tradeID &&
+		(r.payment.Status == model.PaymentStatusPaid || r.payment.Status == model.PaymentStatusPartiallyRefunded || r.payment.Status == model.PaymentStatusRefunded) {
+		copy := r.payment
+		return &copy, nil
+	}
+	return nil, gorm.ErrRecordNotFound
+}
+
+func (r *fakePaymentRepository) FindAllocationsByPaymentID(_ context.Context, paymentID int64) ([]model.PaymentAllocation, error) {
+	values := make([]model.PaymentAllocation, 0, len(r.allocations))
+	for _, allocation := range r.allocations {
+		if allocation.PaymentID == paymentID {
+			values = append(values, allocation)
+		}
+	}
+	return values, nil
 }
 
 func (r *fakePaymentRepository) MarkPaid(_ context.Context, id int64, userID int64, transactionID string, paidAt time.Time) error {
@@ -77,6 +132,8 @@ func (r *fakePaymentRepository) MarkPaid(_ context.Context, id int64, userID int
 		return fmt.Errorf("payment state changed")
 	}
 	r.payment.Status = model.PaymentStatusPaid
+	r.payment.ActiveOrderID = nil
+	r.payment.ActiveTradeID = nil
 	r.payment.TransactionID = transactionID
 	r.payment.PaidAt = &paidAt
 	return nil
@@ -87,13 +144,25 @@ func (r *fakePaymentRepository) MarkClosed(_ context.Context, id int64, userID i
 		return fmt.Errorf("payment state changed")
 	}
 	r.payment.Status = model.PaymentStatusClosed
+	r.payment.ActiveOrderID = nil
+	r.payment.ActiveTradeID = nil
 	r.payment.ClosedAt = &closedAt
 	return nil
 }
 
 func (r *fakePaymentRepository) ClosePendingByOrderID(_ context.Context, orderID int64, closedAt time.Time) error {
-	if r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPending {
+	if r.payment.OrderID != nil && *r.payment.OrderID == orderID && r.payment.Status == model.PaymentStatusPending {
 		r.payment.Status = model.PaymentStatusClosed
+		r.payment.ActiveOrderID = nil
+		r.payment.ClosedAt = &closedAt
+	}
+	return nil
+}
+
+func (r *fakePaymentRepository) ClosePendingByTradeID(_ context.Context, tradeID int64, closedAt time.Time) error {
+	if r.payment.TradeID != nil && *r.payment.TradeID == tradeID && r.payment.Status == model.PaymentStatusPending {
+		r.payment.Status = model.PaymentStatusClosed
+		r.payment.ActiveTradeID = nil
 		r.payment.ClosedAt = &closedAt
 	}
 	return nil
@@ -105,6 +174,24 @@ func (r *fakePaymentRepository) FindOrderByIDAndUserID(_ context.Context, orderI
 	}
 	copy := r.order
 	return &copy, nil
+}
+
+func (r *fakePaymentRepository) FindTradeByIDAndUserID(_ context.Context, tradeID int64, userID int64) (*model.Trade, error) {
+	if r.trade.ID != tradeID || r.trade.UserID != userID {
+		return nil, gorm.ErrRecordNotFound
+	}
+	copy := r.trade
+	return &copy, nil
+}
+
+func (r *fakePaymentRepository) FindOrdersByTradeID(_ context.Context, tradeID int64, userID int64) ([]model.Order, error) {
+	values := make([]model.Order, 0, len(r.tradeOrders))
+	for _, order := range r.tradeOrders {
+		if order.TradeID != nil && *order.TradeID == tradeID && order.UserID == userID {
+			values = append(values, order)
+		}
+	}
+	return values, nil
 }
 
 func (r *fakePaymentRepository) UpdateOrderStatus(
@@ -120,6 +207,46 @@ func (r *fakePaymentRepository) UpdateOrderStatus(
 	}
 	r.order.Status = nextStatus
 	r.order.PaidAt = paidAt
+	return nil
+}
+
+func (r *fakePaymentRepository) UpdateTradeStatus(
+	_ context.Context,
+	tradeID int64,
+	userID int64,
+	currentStatus int,
+	nextStatus int,
+	paidAt *time.Time,
+) error {
+	if r.trade.ID != tradeID || r.trade.UserID != userID || r.trade.Status != currentStatus {
+		return fmt.Errorf("trade state changed")
+	}
+	r.trade.Status = nextStatus
+	r.trade.PaidAt = paidAt
+	return nil
+}
+
+func (r *fakePaymentRepository) UpdateTradeOrdersStatus(
+	_ context.Context,
+	tradeID int64,
+	userID int64,
+	expectedCount int64,
+	currentStatus int,
+	nextStatus int,
+	paidAt *time.Time,
+) error {
+	var updated int64
+	for i := range r.tradeOrders {
+		order := &r.tradeOrders[i]
+		if order.TradeID != nil && *order.TradeID == tradeID && order.UserID == userID && order.Status == currentStatus {
+			order.Status = nextStatus
+			order.PaidAt = paidAt
+			updated++
+		}
+	}
+	if updated != expectedCount {
+		return fmt.Errorf("trade order state changed")
+	}
 	return nil
 }
 
@@ -144,11 +271,12 @@ func (g *fakeAlipayGateway) Close(context.Context, model.Payment) error {
 }
 
 func newPaymentSyncService(state alipayTradeState) (*paymentService, *fakePaymentRepository, *fakeAlipayGateway) {
+	activeID := int64(2)
 	repo := &fakePaymentRepository{
 		payment: model.Payment{
-			ID: 1, PaymentNo: "P001", OrderID: 2, UserID: 3, MerchantID: 1,
+			ID: 1, PaymentNo: "P001", OrderID: paymentTestInt64(2), UserID: 3, MerchantID: paymentTestInt64(1),
 			PayChannel: model.PayChannelAlipay, PayScene: model.PaySceneAlipayPage,
-			Status: model.PaymentStatusPending, Amount: 100,
+			Status: model.PaymentStatusPending, Amount: 100, ActiveOrderID: &activeID,
 		},
 		order: model.Order{ID: 2, UserID: 3, Status: model.OrderStatusPendingPayment},
 	}
@@ -169,6 +297,9 @@ func TestPaymentSyncMarksAlipayTradePaid(t *testing.T) {
 	if result.Status != model.PaymentStatusPaid || repo.order.Status != model.OrderStatusPaid || result.TransactionID != "ALI001" {
 		t.Fatalf("unexpected synchronized state: payment=%+v order=%+v", result, repo.order)
 	}
+	if repo.payment.ActiveOrderID != nil {
+		t.Fatalf("paid payment still occupies active order: %+v", repo.payment)
+	}
 }
 
 func TestPaymentSyncMarksClosedTradeClosed(t *testing.T) {
@@ -179,6 +310,9 @@ func TestPaymentSyncMarksClosedTradeClosed(t *testing.T) {
 	}
 	if result.Status != model.PaymentStatusClosed || repo.order.Status != model.OrderStatusPendingPayment {
 		t.Fatalf("unexpected closed state: payment=%+v order=%+v", result, repo.order)
+	}
+	if repo.payment.ActiveOrderID != nil {
+		t.Fatalf("closed payment still occupies active order: %+v", repo.payment)
 	}
 }
 

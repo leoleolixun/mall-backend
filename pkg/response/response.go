@@ -7,11 +7,14 @@ import (
 )
 
 const (
-	CodeSuccess       = 0
-	CodeBadRequest    = 40000
-	CodeInternalError = 50000
-	CodeUnauthorized  = 401 // 未登录
-	CodeForbidden     = 40300
+	CodeSuccess         = 0
+	CodeBadRequest      = 40000
+	CodeInternalError   = 50000
+	CodeUnauthorized    = 401 // 未登录
+	CodeForbidden       = 40300
+	CodeNotFound        = 40400
+	CodeConflict        = 40900
+	CodeTooManyRequests = 42900
 )
 
 type Response struct {

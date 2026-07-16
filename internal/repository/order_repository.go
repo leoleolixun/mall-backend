@@ -14,6 +14,7 @@ import (
 type OrderRepository interface {
 	Transaction(ctx context.Context, fn func(repo OrderRepository) error) error
 
+	CreateTrade(ctx context.Context, trade *model.Trade) error
 	Create(ctx context.Context, order *model.Order) error
 	CreateItems(ctx context.Context, items []model.OrderItem) error
 	Update(ctx context.Context, order *model.Order) error
@@ -32,6 +33,7 @@ type OrderRepository interface {
 	FindUserCoupon(ctx context.Context, id, userID int64) (*model.UserCoupon, error)
 	FindUserCouponForUpdate(ctx context.Context, id, userID int64) (*model.UserCoupon, error)
 	FindCoupon(ctx context.Context, id int64) (*model.Coupon, error)
+	FindMerchantByID(ctx context.Context, id int64) (*model.Merchant, error)
 	UseUserCoupon(ctx context.Context, id, userID, orderID int64, usedAt time.Time) error
 	ReleaseUserCoupon(ctx context.Context, id, userID, orderID int64) error
 	IncrementCouponUsed(ctx context.Context, couponID int64, delta int) error
@@ -51,6 +53,10 @@ func (r *orderRepository) Transaction(ctx context.Context, fn func(repo OrderRep
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return fn(&orderRepository{db: tx})
 	})
+}
+
+func (r *orderRepository) CreateTrade(ctx context.Context, trade *model.Trade) error {
+	return r.db.WithContext(ctx).Create(trade).Error
 }
 
 func (r *orderRepository) Create(ctx context.Context, order *model.Order) error {
@@ -113,6 +119,14 @@ func (r *orderRepository) FindByIDAndUserID(ctx context.Context, id int64, userI
 	}
 
 	return &order, nil
+}
+
+func (r *orderRepository) FindMerchantByID(ctx context.Context, id int64) (*model.Merchant, error) {
+	var merchant model.Merchant
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&merchant).Error; err != nil {
+		return nil, err
+	}
+	return &merchant, nil
 }
 
 func (r *orderRepository) FindItemsByOrderID(ctx context.Context, orderID int64) ([]model.OrderItem, error) {
@@ -274,7 +288,8 @@ func (r *orderRepository) ClosePendingPayments(ctx context.Context, orderID int6
 		Model(&model.Payment{}).
 		Where("order_id = ? AND status = ?", orderID, model.PaymentStatusPending).
 		Updates(map[string]interface{}{
-			"status":    model.PaymentStatusClosed,
-			"closed_at": &closedAt,
+			"status":          model.PaymentStatusClosed,
+			"active_order_id": nil,
+			"closed_at":       &closedAt,
 		}).Error
 }

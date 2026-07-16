@@ -15,16 +15,26 @@ import (
 )
 
 type fakeOrderRepository struct {
+	merchant      model.Merchant
 	order         *model.Order
 	items         []model.OrderItem
 	shipment      *model.Shipment
 	inventoryLogs []model.InventoryLog
+	userCoupon    *model.UserCoupon
+	coupon        *model.Coupon
 	createCalls   int
+	tradeCalls    int
 	completeErr   error
 }
 
 func (r *fakeOrderRepository) Transaction(_ context.Context, fn func(repository.OrderRepository) error) error {
 	return fn(r)
+}
+
+func (r *fakeOrderRepository) CreateTrade(_ context.Context, trade *model.Trade) error {
+	r.tradeCalls++
+	trade.ID = 84
+	return nil
 }
 
 func (r *fakeOrderRepository) Create(_ context.Context, order *model.Order) error {
@@ -103,16 +113,37 @@ func (r *fakeOrderRepository) ClosePendingPayments(_ context.Context, _ int64, _
 	return nil
 }
 
-func (r *fakeOrderRepository) FindUserCoupon(context.Context, int64, int64) (*model.UserCoupon, error) {
-	return nil, context.Canceled
+func (r *fakeOrderRepository) FindUserCoupon(_ context.Context, id int64, userID int64) (*model.UserCoupon, error) {
+	if r.userCoupon == nil || r.userCoupon.ID != id || r.userCoupon.UserID != userID {
+		return nil, context.Canceled
+	}
+	value := *r.userCoupon
+	return &value, nil
 }
-func (r *fakeOrderRepository) FindUserCouponForUpdate(context.Context, int64, int64) (*model.UserCoupon, error) {
-	return nil, context.Canceled
+func (r *fakeOrderRepository) FindUserCouponForUpdate(ctx context.Context, id int64, userID int64) (*model.UserCoupon, error) {
+	return r.FindUserCoupon(ctx, id, userID)
 }
-func (r *fakeOrderRepository) FindCoupon(context.Context, int64) (*model.Coupon, error) {
-	return nil, context.Canceled
+func (r *fakeOrderRepository) FindCoupon(_ context.Context, id int64) (*model.Coupon, error) {
+	if r.coupon == nil || r.coupon.ID != id {
+		return nil, context.Canceled
+	}
+	value := *r.coupon
+	return &value, nil
 }
-func (r *fakeOrderRepository) UseUserCoupon(context.Context, int64, int64, int64, time.Time) error {
+func (r *fakeOrderRepository) FindMerchantByID(_ context.Context, id int64) (*model.Merchant, error) {
+	if r.merchant.ID != id {
+		return nil, context.Canceled
+	}
+	value := r.merchant
+	return &value, nil
+}
+func (r *fakeOrderRepository) UseUserCoupon(_ context.Context, id int64, userID int64, orderID int64, usedAt time.Time) error {
+	if r.userCoupon == nil || r.userCoupon.ID != id || r.userCoupon.UserID != userID || r.userCoupon.Status != model.UserCouponStatusUnused {
+		return context.Canceled
+	}
+	r.userCoupon.Status = model.UserCouponStatusUsed
+	r.userCoupon.OrderID = orderID
+	r.userCoupon.UsedAt = &usedAt
 	return nil
 }
 func (r *fakeOrderRepository) ReleaseUserCoupon(context.Context, int64, int64, int64) error {
@@ -197,7 +228,9 @@ func newOrderServiceForTest(t *testing.T) (*orderService, *fakeOrderRepository, 
 		_ = redisClient.Close()
 	})
 
-	orderRepo := &fakeOrderRepository{}
+	orderRepo := &fakeOrderRepository{merchant: model.Merchant{
+		ID: defaultMerchantID, Name: "默认商户", Status: model.StatusEnabled, CommissionRateBPS: 500,
+	}}
 	addressRepo := &fakeAddressRepository{address: model.Address{
 		ID:            4,
 		UserID:        7,
@@ -247,8 +280,17 @@ func TestOrderCreateUsesPreviewTokenAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first create returned error: %v", err)
 	}
-	if created.ID != 42 || created.PayableAmount != 5970 {
+	if created.ID != 42 || created.TradeID == nil || *created.TradeID != 84 || created.PayableAmount != 5970 {
 		t.Fatalf("unexpected created order: %+v", created)
+	}
+	if orderRepo.tradeCalls != 1 {
+		t.Fatalf("expected one compatibility trade insert, got %d", orderRepo.tradeCalls)
+	}
+	if orderRepo.order.MerchantName == nil || *orderRepo.order.MerchantName != "默认商户" ||
+		orderRepo.order.CommissionRateBPS == nil || *orderRepo.order.CommissionRateBPS != 500 ||
+		orderRepo.order.CommissionAmount == nil || *orderRepo.order.CommissionAmount != 298 ||
+		orderRepo.order.SettlementAmount == nil || *orderRepo.order.SettlementAmount != 5672 {
+		t.Fatalf("legacy order did not snapshot settlement fields: %+v", orderRepo.order)
 	}
 	if orderRepo.createCalls != 1 {
 		t.Fatalf("expected one order insert, got %d", orderRepo.createCalls)
@@ -269,6 +311,49 @@ func TestOrderCreateUsesPreviewTokenAndIsIdempotent(t *testing.T) {
 	}
 	if orderRepo.createCalls != 1 {
 		t.Fatalf("retry inserted another order, create calls=%d", orderRepo.createCalls)
+	}
+	if orderRepo.tradeCalls != 1 {
+		t.Fatalf("retry inserted another trade, trade calls=%d", orderRepo.tradeCalls)
+	}
+}
+
+func TestOrderPreviewAndCreatePersistItemDiscountAmounts(t *testing.T) {
+	service, orderRepo, _ := newOrderServiceForTest(t)
+	now := time.Now()
+	orderRepo.userCoupon = &model.UserCoupon{
+		ID: 8, CouponID: 9, UserID: 7, MerchantID: defaultMerchantID, Status: model.UserCouponStatusUnused,
+	}
+	orderRepo.coupon = &model.Coupon{
+		ID: 9, MerchantID: defaultMerchantID, ThresholdAmount: 1000, DiscountAmount: 100,
+		Status: model.CouponStatusActive, StartAt: now.Add(-time.Hour), EndAt: now.Add(time.Hour),
+	}
+	previewRequest := dto.OrderPreviewRequest{
+		AddressID: 4, UserCouponID: 8, Items: []dto.OrderRequestItem{{SKUID: 3, Quantity: 3}},
+	}
+
+	preview, err := service.Preview(context.Background(), 7, previewRequest)
+	if err != nil {
+		t.Fatalf("preview returned error: %v", err)
+	}
+	if len(preview.Items) != 1 || preview.Items[0].DiscountAmount != 100 || preview.Items[0].PayableAmount != 5870 {
+		t.Fatalf("unexpected preview allocation: %+v", preview.Items)
+	}
+
+	created, err := service.Create(context.Background(), 7, dto.CreateOrderRequest{
+		AddressID: previewRequest.AddressID, UserCouponID: previewRequest.UserCouponID,
+		IdempotencyToken: preview.IdempotencyToken, Items: previewRequest.Items,
+	})
+	if err != nil {
+		t.Fatalf("create returned error: %v", err)
+	}
+	if len(orderRepo.items) != 1 || orderRepo.items[0].DiscountAmount != 100 || orderRepo.items[0].PayableAmount != 5870 {
+		t.Fatalf("unexpected stored allocation: %+v", orderRepo.items)
+	}
+	if created.Items[0].DiscountAmount != 100 || created.Items[0].PayableAmount != 5870 || created.PayableAmount != 5870 {
+		t.Fatalf("unexpected order response: %+v", created)
+	}
+	if orderRepo.userCoupon.Status != model.UserCouponStatusUsed || orderRepo.userCoupon.OrderID != created.ID {
+		t.Fatalf("coupon was not consumed with order: %+v", orderRepo.userCoupon)
 	}
 }
 

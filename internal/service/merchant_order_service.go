@@ -96,7 +96,11 @@ func (s *merchantOrderService) List(
 		return nil, err
 	}
 	page, pageSize := normalizeOrderPage(req.Page, req.PageSize)
-	orders, total, err := s.repo.ListByMerchantID(ctx, merchantID, (page-1)*pageSize, pageSize, req.Status)
+	keyword := strings.TrimSpace(req.Keyword)
+	if len([]rune(keyword)) > 100 {
+		return nil, fmt.Errorf("keyword 参数不能超过 100 个字符")
+	}
+	orders, total, err := s.repo.ListByMerchantID(ctx, merchantID, (page-1)*pageSize, pageSize, req.Status, keyword)
 	if err != nil {
 		return nil, err
 	}

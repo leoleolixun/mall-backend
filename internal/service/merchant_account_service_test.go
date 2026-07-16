@@ -191,3 +191,27 @@ func TestMerchantAccountResetPasswordInvalidatesSession(t *testing.T) {
 		t.Fatalf("unexpected session version: %s", version)
 	}
 }
+
+func TestMerchantAccountCannotUpdateAnotherMerchantAccount(t *testing.T) {
+	accountService, repo, _ := newMerchantAccountServiceForTest(t)
+	repo.accounts[3] = model.MerchantAccount{
+		ID:         3,
+		MerchantID: 20,
+		Username:   "other_merchant_sales",
+		Nickname:   "其他商户销售",
+		Role:       model.MerchantRoleSales,
+		Status:     model.StatusEnabled,
+	}
+	enabled := model.StatusEnabled
+	_, err := accountService.Update(context.Background(), 1, model.MerchantRoleOwner, 10, 3, dto.MerchantAccountUpdateRequest{
+		Nickname: "越权修改",
+		Role:     model.MerchantRoleWarehouse,
+		Status:   &enabled,
+	})
+	if err == nil {
+		t.Fatal("expected another merchant account update to be rejected")
+	}
+	if repo.accounts[3].Nickname != "其他商户销售" || repo.accounts[3].Role != model.MerchantRoleSales {
+		t.Fatalf("another merchant account was modified: %+v", repo.accounts[3])
+	}
+}

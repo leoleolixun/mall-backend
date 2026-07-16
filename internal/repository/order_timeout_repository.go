@@ -14,6 +14,7 @@ import (
 type OrderTimeoutRepository interface {
 	Transaction(ctx context.Context, fn func(repo OrderTimeoutRepository) error) error
 	ListExpiredPendingOrderIDs(ctx context.Context, before time.Time, limit int) ([]int64, error)
+	ListExpiredPendingTrades(ctx context.Context, before time.Time, limit int) ([]ExpiredPendingTrade, error)
 	FindOrderForUpdate(ctx context.Context, orderID int64) (*model.Order, error)
 	FindItemsByOrderID(ctx context.Context, orderID int64) ([]model.OrderItem, error)
 	RestoreSKUStock(ctx context.Context, merchantID int64, skuID int64, quantity int) (int, error)
@@ -21,6 +22,11 @@ type OrderTimeoutRepository interface {
 	ClosePendingPayments(ctx context.Context, orderID int64, closedAt time.Time) error
 	MarkOrderCancelled(ctx context.Context, orderID int64, cancelledAt time.Time) error
 	ReleaseOrderCoupon(ctx context.Context, order *model.Order) error
+}
+
+type ExpiredPendingTrade struct {
+	ID     int64
+	UserID int64
 }
 
 type orderTimeoutRepository struct {
@@ -48,11 +54,26 @@ func (r *orderTimeoutRepository) ListExpiredPendingOrderIDs(
 	var ids []int64
 	err := r.db.WithContext(ctx).
 		Model(&model.Order{}).
-		Where("status = ? AND created_at <= ?", model.OrderStatusPendingPayment, before).
+		Where("trade_id IS NULL AND status = ? AND created_at <= ?", model.OrderStatusPendingPayment, before).
 		Order("created_at ASC, id ASC").
 		Limit(limit).
 		Pluck("id", &ids).Error
 	return ids, err
+}
+
+func (r *orderTimeoutRepository) ListExpiredPendingTrades(
+	ctx context.Context,
+	before time.Time,
+	limit int,
+) ([]ExpiredPendingTrade, error) {
+	var values []ExpiredPendingTrade
+	err := r.db.WithContext(ctx).Model(&model.Trade{}).
+		Select("id", "user_id").
+		Where("status = ? AND created_at <= ?", model.TradeStatusPendingPayment, before).
+		Order("created_at ASC, id ASC").
+		Limit(limit).
+		Find(&values).Error
+	return values, err
 }
 
 func (r *orderTimeoutRepository) FindOrderForUpdate(ctx context.Context, orderID int64) (*model.Order, error) {
@@ -115,8 +136,9 @@ func (r *orderTimeoutRepository) ClosePendingPayments(ctx context.Context, order
 		Model(&model.Payment{}).
 		Where("order_id = ? AND status = ?", orderID, model.PaymentStatusPending).
 		Updates(map[string]interface{}{
-			"status":    model.PaymentStatusClosed,
-			"closed_at": &closedAt,
+			"status":          model.PaymentStatusClosed,
+			"active_order_id": nil,
+			"closed_at":       &closedAt,
 		}).Error
 }
 

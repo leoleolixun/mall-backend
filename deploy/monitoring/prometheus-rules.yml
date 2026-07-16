@@ -1,0 +1,118 @@
+groups:
+  - name: go-mall-availability
+    rules:
+      - alert: GoMallBackendDown
+        expr: up{job="go-mall"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: go-mall 后端不可用
+          description: Prometheus 连续 2 分钟无法采集 go-mall 指标。
+
+      - alert: GoMallHighHTTP5xxRate
+        expr: |
+          sum(rate(go_mall_http_requests_total{status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(go_mall_http_requests_total[5m])), 1)
+          > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: go-mall 5xx 比例超过 2%
+          description: 最近 5 分钟 HTTP 5xx 比例持续超过发布门槛。
+
+      - alert: GoMallPaymentCallbackFailure
+        expr: increase(go_mall_payment_callback_failures_total[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: 支付回调处理失败
+          description: 最近 5 分钟出现支付回调解析、验签或业务处理失败。
+
+      - alert: GoMallMetricCollectionFailure
+        expr: increase(go_mall_observability_collection_failures_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: go-mall 数据库指标采集失败
+          description: 待支付订单或未知退款指标无法从数据库采集。
+
+  - name: go-mall-business-backlog
+    rules:
+      - alert: GoMallPendingPaymentBacklog
+        expr: go_mall_order_pending_payment_total > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: 待支付订单持续积压
+          description: 待支付订单超过 100 笔并持续 15 分钟，请检查支付和超时取消任务。
+
+      - alert: GoMallUnknownRefundBacklog
+        expr: go_mall_refund_unknown_total > 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 存在退款结果未知记录
+          description: 退款结果未知超过 10 分钟，请检查支付宝查询和退款对账任务。
+
+      - alert: GoMallTimerFailed
+        expr: node_systemd_unit_state{name=~"go-mall-(cancel-expired-orders|complete-shipped-orders|reconcile-refunds)\\.service",state="failed"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: go-mall 定时任务失败
+          description: systemd 报告至少一个订单或退款定时任务执行失败。
+
+  - name: go-mall-dependencies
+    rules:
+      - alert: GoMallNginxDown
+        expr: nginx_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Nginx exporter 报告服务不可用
+          description: 请检查 Nginx 进程、配置和反向代理。
+
+      - alert: GoMallMySQLDown
+        expr: mysql_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: MySQL 不可用
+          description: MySQL exporter 无法连接商城数据库。
+
+      - alert: GoMallRedisDown
+        expr: redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis 不可用
+          description: Redis exporter 无法连接商城 Redis。
+
+      - alert: GoMallDiskSpaceLow
+        expr: node_filesystem_avail_bytes{fstype!~"tmpfs|overlay"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay"} < 0.15
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 服务器磁盘可用空间低于 15%
+          description: 请检查 journald、发布备份、数据库和 Nginx 日志占用。
+
+      - alert: GoMallCertificateExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry{job="mall-certificate"} - time() < 14 * 24 * 60 * 60
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: mall.leedu.ac.cn 证书将在 14 天内到期
+          description: 请检查 Certbot 自动续期和 Nginx 证书加载状态。

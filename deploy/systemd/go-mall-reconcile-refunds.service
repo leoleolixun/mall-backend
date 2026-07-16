@@ -1,0 +1,8 @@
+[Unit]
+Description=go-mall reconcile pending refunds
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/mall/backend
+ExecStart=/opt/mall/backend/bin/go-mall-reconcile-refunds

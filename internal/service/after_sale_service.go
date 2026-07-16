@@ -14,7 +14,6 @@ import (
 	"go-mall/internal/repository"
 
 	"github.com/google/uuid"
-	"github.com/smartwalle/alipay/v3"
 	"gorm.io/gorm"
 )
 
@@ -26,15 +25,16 @@ type AfterSaleService interface {
 	MerchantList(ctx context.Context, merchantID int64, req dto.AfterSaleListRequest) (*dto.PageResponse[dto.AfterSaleResponse], error)
 	MerchantApprove(ctx context.Context, merchantID, accountID, id int64) (*dto.AfterSaleResponse, error)
 	MerchantReject(ctx context.Context, merchantID, accountID, id int64, reason string) (*dto.AfterSaleResponse, error)
+	MerchantSyncRefund(ctx context.Context, merchantID, id int64) (*dto.AfterSaleResponse, error)
 }
 
 type afterSaleService struct {
-	repo       repository.AfterSaleRepository
-	paymentCfg config.PaymentConfig
+	repo    repository.AfterSaleRepository
+	refunds *refundCoordinator
 }
 
 func NewAfterSaleService(repo repository.AfterSaleRepository, paymentCfg config.PaymentConfig) AfterSaleService {
-	return &afterSaleService{repo: repo, paymentCfg: paymentCfg}
+	return &afterSaleService{repo: repo, refunds: newRefundCoordinator(repo, paymentCfg)}
 }
 
 func generateAfterSaleNo() string {
@@ -78,6 +78,8 @@ func refundStatusText(status int) string {
 		return "退款成功"
 	case model.RefundStatusFailed:
 		return "退款失败"
+	case model.RefundStatusUnknown:
+		return "退款结果确认中"
 	default:
 		return "未知状态"
 	}
@@ -128,7 +130,22 @@ func (s *afterSaleService) buildResponse(ctx context.Context, value model.AfterS
 	}
 	refund, err := s.repo.FindRefundByAfterSaleID(ctx, value.ID)
 	if err == nil {
-		resp.Refund = &dto.RefundResponse{RefundNo: refund.RefundNo, PayChannel: refund.PayChannel, Amount: refund.Amount, Status: refund.Status, StatusText: refundStatusText(refund.Status), TransactionID: refund.TransactionID, FailureReason: refund.FailureReason, RefundedAt: stringTime(refund.RefundedAt)}
+		resp.Refund = &dto.RefundResponse{
+			TradeID:             refund.TradeID,
+			PaymentAllocationID: refund.PaymentAllocationID,
+			RefundNo:            refund.RefundNo,
+			PayChannel:          refund.PayChannel,
+			Amount:              refund.Amount,
+			Status:              refund.Status,
+			StatusText:          refundStatusText(refund.Status),
+			TransactionID:       refund.TransactionID,
+			FailureReason:       refund.FailureReason,
+			LastError:           refund.LastError,
+			RetryCount:          refund.RetryCount,
+			LastAttemptAt:       stringTime(refund.LastAttemptAt),
+			NextRetryAt:         stringTime(refund.NextRetryAt),
+			RefundedAt:          stringTime(refund.RefundedAt),
+		}
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
@@ -169,10 +186,10 @@ func (s *afterSaleService) Create(ctx context.Context, userID int64, req dto.Cre
 		return nil, err
 	}
 	images, _ := json.Marshal(req.Images)
-	refundAmount := item.Subtotal
-	if order.GoodsAmount > 0 && order.DiscountAmount > 0 {
-		refundAmount = item.Subtotal * (order.GoodsAmount - order.DiscountAmount) / order.GoodsAmount
+	if item.Subtotal < 0 || item.DiscountAmount < 0 || item.DiscountAmount > item.Subtotal || item.PayableAmount != item.Subtotal-item.DiscountAmount {
+		return nil, fmt.Errorf("订单商品金额快照不完整")
 	}
+	refundAmount := item.PayableAmount
 	if refundAmount <= 0 || refundAmount > order.PayableAmount {
 		return nil, fmt.Errorf("可退款金额不合法")
 	}
@@ -251,6 +268,7 @@ func (s *afterSaleService) MerchantApprove(ctx context.Context, merchantID, acco
 	var afterSale *model.AfterSale
 	var payment *model.Payment
 	var refund *model.Refund
+	queryFirst := false
 	err := s.repo.Transaction(ctx, func(repo repository.AfterSaleRepository) error {
 		value, err := repo.FindForUpdateByIDAndMerchantID(ctx, id, merchantID)
 		if err != nil {
@@ -263,31 +281,67 @@ func (s *afterSaleService) MerchantApprove(ctx context.Context, merchantID, acco
 		if value.Status != model.AfterSaleStatusPending && value.Status != model.AfterSaleStatusRefundFailed && value.Status != model.AfterSaleStatusRefunding {
 			return fmt.Errorf("当前售后状态不能同意")
 		}
-		currentRefund, err := repo.FindRefundByAfterSaleID(ctx, value.ID)
-		if err == nil && currentRefund.Status == model.RefundStatusSucceeded {
-			pay, findErr := repo.FindPaymentByID(ctx, currentRefund.PaymentID)
-			if findErr != nil {
-				return fmt.Errorf("订单支付单不存在")
+		currentRefund, findErr := repo.FindRefundByAfterSaleID(ctx, value.ID)
+		var pay *model.Payment
+		var allocation *model.PaymentAllocation
+		if errors.Is(findErr, gorm.ErrRecordNotFound) {
+			pay, allocation, err = repo.FindPaidPaymentAllocationByOrderID(ctx, value.OrderID)
+			if err != nil {
+				return fmt.Errorf("订单支付分配不存在，请先完成 M8 迁移")
 			}
-			afterSale, payment, refund = value, pay, currentRefund
-			return nil
-		}
-		pay, payErr := repo.FindPaidPaymentByOrderID(ctx, value.OrderID)
-		if payErr != nil {
-			return fmt.Errorf("订单支付单不存在")
-		}
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			currentRefund = &model.Refund{RefundNo: generateRefundNo(), AfterSaleID: value.ID, PaymentID: pay.ID, OrderID: value.OrderID, UserID: value.UserID, MerchantID: value.MerchantID, PayChannel: pay.PayChannel, Amount: value.RefundAmount, Status: model.RefundStatusPending}
+			reserved, err := repo.SumReservedRefundsByAllocation(ctx, allocation.ID, 0)
+			if err != nil {
+				return err
+			}
+			if value.RefundAmount <= 0 || reserved > allocation.Amount-value.RefundAmount {
+				return fmt.Errorf("退款金额超过子订单剩余可退金额")
+			}
+			tradeID := allocation.TradeID
+			allocationID := allocation.ID
+			currentRefund = &model.Refund{
+				TradeID: &tradeID, RefundNo: generateRefundNo(), AfterSaleID: value.ID,
+				PaymentID: pay.ID, PaymentAllocationID: &allocationID, OrderID: value.OrderID,
+				UserID: value.UserID, MerchantID: value.MerchantID, PayChannel: pay.PayChannel,
+				Amount: value.RefundAmount, Status: model.RefundStatusPending,
+			}
 			if err := repo.CreateRefund(ctx, currentRefund); err != nil {
 				return err
 			}
-		} else if err != nil {
-			return err
-		} else if currentRefund.Status == model.RefundStatusFailed {
-			if err := repo.MarkRefundPending(ctx, currentRefund.ID); err != nil {
-				return err
+		} else if findErr != nil {
+			return findErr
+		} else {
+			if currentRefund.PaymentAllocationID == nil || currentRefund.TradeID == nil {
+				return fmt.Errorf("退款单缺少交易支付分配，请先完成 M8 回填")
 			}
-			currentRefund.Status = model.RefundStatusPending
+			allocation, err = repo.FindPaymentAllocationForUpdate(ctx, *currentRefund.PaymentAllocationID)
+			if err != nil {
+				return fmt.Errorf("订单支付分配不存在")
+			}
+			pay, err = repo.FindPaymentByID(ctx, currentRefund.PaymentID)
+			if err != nil {
+				return fmt.Errorf("订单支付单不存在")
+			}
+			switch currentRefund.Status {
+			case model.RefundStatusSucceeded:
+			case model.RefundStatusFailed:
+				reserved, err := repo.SumReservedRefundsByAllocation(ctx, allocation.ID, currentRefund.ID)
+				if err != nil {
+					return err
+				}
+				if currentRefund.Amount <= 0 || reserved > allocation.Amount-currentRefund.Amount {
+					return fmt.Errorf("退款金额超过子订单剩余可退金额")
+				}
+				if err := repo.MarkRefundPending(ctx, currentRefund.ID); err != nil {
+					return err
+				}
+				currentRefund.Status = model.RefundStatusPending
+				currentRefund.FailureReason = ""
+				queryFirst = true
+			case model.RefundStatusPending, model.RefundStatusUnknown:
+				queryFirst = true
+			default:
+				return fmt.Errorf("退款单状态不合法")
+			}
 		}
 		if value.Status != model.AfterSaleStatusRefunding {
 			now := time.Now()
@@ -302,68 +356,77 @@ func (s *afterSaleService) MerchantApprove(ctx context.Context, merchantID, acco
 	if err != nil {
 		return nil, err
 	}
-	if afterSale.Status == model.AfterSaleStatusRefunded {
+	if afterSale.Status == model.AfterSaleStatusRefunded && refund == nil {
 		return s.buildResponse(ctx, *afterSale)
 	}
-	transactionID := refund.TransactionID
-	var refundErr error
-	if refund.Status != model.RefundStatusSucceeded {
-		transactionID, refundErr = s.executeRefund(ctx, *payment, *refund, afterSale.Reason)
-	}
-	if refundErr != nil {
-		_ = s.repo.Transaction(ctx, func(repo repository.AfterSaleRepository) error {
-			if err := repo.MarkRefundFailed(ctx, refund.ID, refundErr.Error()); err != nil {
-				return err
-			}
-			return repo.UpdateStatus(ctx, afterSale.ID, []int{model.AfterSaleStatusRefunding}, map[string]interface{}{"status": model.AfterSaleStatusRefundFailed})
-		})
-		return nil, fmt.Errorf("退款发起失败: %w", refundErr)
-	}
 	now := time.Now()
-	err = s.repo.Transaction(ctx, func(repo repository.AfterSaleRepository) error {
-		if err := repo.MarkRefundSucceeded(ctx, refund.ID, transactionID, now); err != nil {
-			return err
+	if refund.Status == model.RefundStatusSucceeded {
+		refundedAt := now
+		if refund.RefundedAt != nil {
+			refundedAt = *refund.RefundedAt
 		}
-		if err := repo.UpdateStatus(ctx, afterSale.ID, []int{model.AfterSaleStatusRefunding}, map[string]interface{}{"status": model.AfterSaleStatusRefunded, "refunded_at": &now, "active_key": afterSale.AfterSaleNo}); err != nil {
-			return err
+		err = s.refunds.finalize(ctx, refund.ID, refund.TransactionID, refundedAt)
+	} else {
+		var outcome refundProcessOutcome
+		outcome, err = s.refunds.Process(ctx, *afterSale, *payment, *refund, queryFirst, now)
+		if outcome == refundProcessOutcomeFailed {
+			return nil, err
 		}
-		refundedAmount, err := repo.SumSucceededRefunds(ctx, payment.ID)
-		if err != nil {
-			return err
-		}
-		status := model.PaymentStatusPartiallyRefunded
-		if refundedAmount >= payment.Amount {
-			status = model.PaymentStatusRefunded
-		}
-		return repo.UpdatePaymentRefundStatus(ctx, payment.ID, status)
-	})
+	}
 	if err != nil {
+		// The provider result is uncertain, but Process has persisted it for reconciliation.
+		if latest, findErr := s.repo.FindByIDAndMerchantID(ctx, id, merchantID); findErr == nil {
+			return s.buildResponse(ctx, *latest)
+		}
 		return nil, err
 	}
 	value, _ := s.repo.FindByIDAndMerchantID(ctx, id, merchantID)
 	return s.buildResponse(ctx, *value)
 }
 
-func (s *afterSaleService) executeRefund(ctx context.Context, payment model.Payment, refund model.Refund, reason string) (string, error) {
-	switch payment.PayChannel {
-	case model.PayChannelMock:
-		return "MOCK-" + refund.RefundNo, nil
-	case model.PayChannelAlipay:
-		client, err := newAlipayClient(s.paymentCfg.Alipay)
-		if err != nil {
-			return "", err
-		}
-		result, err := client.TradeRefund(ctx, alipay.TradeRefund{OutTradeNo: payment.PaymentNo, RefundAmount: amountFenToYuan(refund.Amount), RefundReason: reason, OutRequestNo: refund.RefundNo})
-		if err != nil {
-			return "", err
-		}
-		if !result.IsSuccess() {
-			return "", fmt.Errorf("%s %s", result.SubCode, result.SubMsg)
-		}
-		return result.TradeNo, nil
-	case model.PayChannelWechat:
-		return "", fmt.Errorf("微信退款尚未接入")
-	default:
-		return "", fmt.Errorf("支付渠道不支持退款")
+func (s *afterSaleService) MerchantSyncRefund(ctx context.Context, merchantID, id int64) (*dto.AfterSaleResponse, error) {
+	afterSale, err := s.repo.FindByIDAndMerchantID(ctx, id, merchantID)
+	if err != nil {
+		return nil, fmt.Errorf("售后申请不存在")
 	}
+	refund, err := s.repo.FindRefundByAfterSaleID(ctx, afterSale.ID)
+	if err != nil {
+		return nil, fmt.Errorf("退款单不存在")
+	}
+	if refund.Status == model.RefundStatusFailed {
+		return nil, fmt.Errorf("退款已明确失败，请重新同意售后后发起")
+	}
+	if refund.Status == model.RefundStatusSucceeded && afterSale.Status == model.AfterSaleStatusRefunded {
+		return s.buildResponse(ctx, *afterSale)
+	}
+	payment, err := s.repo.FindPaymentByID(ctx, refund.PaymentID)
+	if err != nil {
+		return nil, fmt.Errorf("订单支付单不存在")
+	}
+
+	now := time.Now()
+	if refund.Status == model.RefundStatusSucceeded {
+		refundedAt := now
+		if refund.RefundedAt != nil {
+			refundedAt = *refund.RefundedAt
+		}
+		err = s.refunds.finalize(ctx, refund.ID, refund.TransactionID, refundedAt)
+	} else {
+		outcome, processErr := s.refunds.Process(ctx, *afterSale, *payment, *refund, true, now)
+		if outcome == refundProcessOutcomeFailed {
+			return nil, processErr
+		}
+		err = processErr
+	}
+	if err != nil {
+		if latest, findErr := s.repo.FindByIDAndMerchantID(ctx, id, merchantID); findErr == nil {
+			return s.buildResponse(ctx, *latest)
+		}
+		return nil, err
+	}
+	latest, err := s.repo.FindByIDAndMerchantID(ctx, id, merchantID)
+	if err != nil {
+		return nil, err
+	}
+	return s.buildResponse(ctx, *latest)
 }

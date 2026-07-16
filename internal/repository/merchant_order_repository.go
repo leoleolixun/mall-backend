@@ -12,7 +12,7 @@ import (
 
 type MerchantOrderRepository interface {
 	Transaction(ctx context.Context, fn func(repo MerchantOrderRepository) error) error
-	ListByMerchantID(ctx context.Context, merchantID int64, offset int, limit int, status int) ([]model.Order, int64, error)
+	ListByMerchantID(ctx context.Context, merchantID int64, offset int, limit int, status int, keyword string) ([]model.Order, int64, error)
 	FindByIDAndMerchantID(ctx context.Context, orderID int64, merchantID int64) (*model.Order, error)
 	FindByIDAndMerchantIDForUpdate(ctx context.Context, orderID int64, merchantID int64) (*model.Order, error)
 	FindItemsByOrderID(ctx context.Context, orderID int64) ([]model.OrderItem, error)
@@ -47,6 +47,7 @@ func (r *merchantOrderRepository) ListByMerchantID(
 	offset int,
 	limit int,
 	status int,
+	keyword string,
 ) ([]model.Order, int64, error) {
 	var orders []model.Order
 	var total int64
@@ -55,6 +56,15 @@ func (r *merchantOrderRepository) ListByMerchantID(
 		Where("merchant_id = ?", merchantID)
 	if status > 0 {
 		query = query.Where("status = ?", status)
+	}
+	if keyword != "" {
+		pattern := "%" + keyword + "%"
+		query = query.Where(
+			"order_no LIKE ? OR receiver_name LIKE ? OR receiver_phone LIKE ?",
+			pattern,
+			pattern,
+			pattern,
+		)
 	}
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err

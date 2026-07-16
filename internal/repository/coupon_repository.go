@@ -17,6 +17,7 @@ type CouponRepository interface {
 	Update(ctx context.Context, coupon *model.Coupon) error
 	FindByIDAndMerchantID(ctx context.Context, id, merchantID int64) (*model.Coupon, error)
 	FindForUpdate(ctx context.Context, id int64) (*model.Coupon, error)
+	IsMerchantEnabled(ctx context.Context, merchantID int64) (bool, error)
 	ListByMerchantID(ctx context.Context, merchantID int64, offset, limit, status int) ([]model.Coupon, int64, error)
 	ListAvailable(ctx context.Context, merchantID, userID int64, now time.Time) ([]model.Coupon, map[int64]int64, error)
 	CountClaimedByUser(ctx context.Context, couponID, userID int64) (int64, error)
@@ -49,6 +50,14 @@ func (r *couponRepository) FindForUpdate(ctx context.Context, id int64) (*model.
 	var value model.Coupon
 	err := r.db.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&value, id).Error
 	return &value, err
+}
+func (r *couponRepository) IsMerchantEnabled(ctx context.Context, merchantID int64) (bool, error) {
+	var count int64
+	err := r.db.WithContext(ctx).
+		Model(&model.Merchant{}).
+		Where("id = ? AND status = ?", merchantID, model.StatusEnabled).
+		Count(&count).Error
+	return count > 0, err
 }
 func (r *couponRepository) ListByMerchantID(ctx context.Context, merchantID int64, offset, limit, status int) ([]model.Coupon, int64, error) {
 	var values []model.Coupon

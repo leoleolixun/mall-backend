@@ -28,6 +28,7 @@ const (
 	MerchantPermissionAfterSaleWrite MerchantPermission = "after_sale:write"
 	MerchantPermissionMarketingRead  MerchantPermission = "marketing:read"
 	MerchantPermissionMarketingWrite MerchantPermission = "marketing:write"
+	MerchantPermissionSettlementRead MerchantPermission = "settlement:read"
 )
 
 var allMerchantPermissions = []MerchantPermission{
@@ -46,6 +47,7 @@ var allMerchantPermissions = []MerchantPermission{
 	MerchantPermissionAfterSaleWrite,
 	MerchantPermissionMarketingRead,
 	MerchantPermissionMarketingWrite,
+	MerchantPermissionSettlementRead,
 }
 
 var merchantOperatorPermissions = []MerchantPermission{

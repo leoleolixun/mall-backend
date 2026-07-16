@@ -157,25 +157,40 @@ func TestMerchantAuthRejectsDisabledMerchant(t *testing.T) {
 }
 
 func TestMerchantRolePermissions(t *testing.T) {
-	tests := []struct {
-		role       string
-		permission MerchantPermission
-		allowed    bool
-	}{
-		{role: "owner", permission: MerchantPermissionCatalogWrite, allowed: true},
-		{role: "owner", permission: MerchantPermissionAccountWrite, allowed: true},
-		{role: "operator", permission: MerchantPermissionAccountRead, allowed: false},
-		{role: "sales", permission: MerchantPermissionDashboardRead, allowed: true},
-		{role: "sales", permission: MerchantPermissionOrderShip, allowed: false},
-		{role: "sales", permission: MerchantPermissionCustomerRead, allowed: true},
-		{role: "warehouse", permission: MerchantPermissionOrderShip, allowed: true},
-		{role: "warehouse", permission: MerchantPermissionInventoryWrite, allowed: true},
-		{role: "warehouse", permission: MerchantPermissionDashboardRead, allowed: false},
-		{role: "warehouse", permission: MerchantPermissionCustomerRead, allowed: false},
+	allPermissions := []MerchantPermission{
+		MerchantPermissionDashboardRead,
+		MerchantPermissionOrderRead,
+		MerchantPermissionOrderShip,
+		MerchantPermissionCatalogRead,
+		MerchantPermissionCatalogWrite,
+		MerchantPermissionInventoryRead,
+		MerchantPermissionInventoryWrite,
+		MerchantPermissionUpload,
+		MerchantPermissionAccountRead,
+		MerchantPermissionAccountWrite,
+		MerchantPermissionCustomerRead,
+		MerchantPermissionAfterSaleRead,
+		MerchantPermissionAfterSaleWrite,
+		MerchantPermissionMarketingRead,
+		MerchantPermissionMarketingWrite,
+		MerchantPermissionSettlementRead,
 	}
-	for _, test := range tests {
-		if got := MerchantRoleHasPermission(test.role, test.permission); got != test.allowed {
-			t.Errorf("role=%s permission=%s got=%v want=%v", test.role, test.permission, got, test.allowed)
+	expected := map[string][]MerchantPermission{
+		"owner":     allPermissions,
+		"admin":     allPermissions,
+		"operator":  {MerchantPermissionDashboardRead, MerchantPermissionOrderRead, MerchantPermissionOrderShip, MerchantPermissionCatalogRead, MerchantPermissionCatalogWrite, MerchantPermissionInventoryRead, MerchantPermissionInventoryWrite, MerchantPermissionUpload, MerchantPermissionCustomerRead, MerchantPermissionAfterSaleRead, MerchantPermissionAfterSaleWrite, MerchantPermissionMarketingRead, MerchantPermissionMarketingWrite},
+		"sales":     {MerchantPermissionDashboardRead, MerchantPermissionOrderRead, MerchantPermissionCatalogRead, MerchantPermissionCustomerRead, MerchantPermissionAfterSaleRead, MerchantPermissionMarketingRead, MerchantPermissionMarketingWrite},
+		"warehouse": {MerchantPermissionOrderRead, MerchantPermissionOrderShip, MerchantPermissionCatalogRead, MerchantPermissionInventoryRead, MerchantPermissionInventoryWrite, MerchantPermissionAfterSaleRead},
+	}
+	for role, allowedPermissions := range expected {
+		allowed := make(map[MerchantPermission]bool, len(allowedPermissions))
+		for _, permission := range allowedPermissions {
+			allowed[permission] = true
+		}
+		for _, permission := range allPermissions {
+			if got := MerchantRoleHasPermission(role, permission); got != allowed[permission] {
+				t.Errorf("role=%s permission=%s got=%v want=%v", role, permission, got, allowed[permission])
+			}
 		}
 	}
 }

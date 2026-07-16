@@ -4,6 +4,7 @@ type MerchantOrderListRequest struct {
 	Page     int
 	PageSize int
 	Status   int
+	Keyword  string
 }
 
 type ShipOrderRequest struct {

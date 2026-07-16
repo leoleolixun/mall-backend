@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go-mall/internal/config"
+	"go-mall/internal/dto"
 	"go-mall/internal/model"
 	"go-mall/internal/repository"
 )
@@ -18,7 +19,12 @@ type fakeOrderTimeoutRepository struct {
 	closePaymentCalls  int
 	markCancelledCalls int
 	listedOrderIDs     []int64
+	listedTrades       []repository.ExpiredPendingTrade
 	inventoryLogs      []model.InventoryLog
+}
+
+func (r *fakeOrderTimeoutRepository) ListExpiredPendingTrades(context.Context, time.Time, int) ([]repository.ExpiredPendingTrade, error) {
+	return append([]repository.ExpiredPendingTrade(nil), r.listedTrades...), nil
 }
 
 func (r *fakeOrderTimeoutRepository) Transaction(_ context.Context, fn func(repo repository.OrderTimeoutRepository) error) error {
@@ -76,6 +82,19 @@ func (c fakePaymentTimeoutCoordinator) PrepareOrderForTimeoutCancel(context.Cont
 	return c.paid, c.err
 }
 
+type fakeTradeTimeoutCanceller struct {
+	calls int
+	err   error
+}
+
+func (c *fakeTradeTimeoutCanceller) Cancel(_ context.Context, userID int64, tradeID int64) (*dto.TradeResponse, error) {
+	c.calls++
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &dto.TradeResponse{ID: tradeID, UserID: userID, Status: model.TradeStatusClosed}, nil
+}
+
 func newOrderTimeoutServiceForTest(now time.Time, coordinator PaymentTimeoutCoordinator) (*orderTimeoutService, *fakeOrderTimeoutRepository) {
 	repo := &fakeOrderTimeoutRepository{
 		order: model.Order{
@@ -108,6 +127,26 @@ func TestOrderTimeoutCancelsOrderAndRestoresStock(t *testing.T) {
 	}
 	if len(repo.inventoryLogs) != 1 || repo.inventoryLogs[0].ChangeType != model.InventoryChangeOrderTimeout {
 		t.Fatalf("unexpected inventory logs: %+v", repo.inventoryLogs)
+	}
+}
+
+func TestOrderTimeoutCancelsWholeTradeInsteadOfChildOrder(t *testing.T) {
+	now := time.Now()
+	repo := &fakeOrderTimeoutRepository{
+		restored:     map[int64]int{},
+		listedTrades: []repository.ExpiredPendingTrade{{ID: 88, UserID: 7}},
+	}
+	canceller := &fakeTradeTimeoutCanceller{}
+	service := NewOrderTimeoutService(repo, fakePaymentTimeoutCoordinator{}, config.OrderConfig{
+		PendingPaymentTimeoutMinutes: 15,
+		CancelBatchSize:              100,
+	}, canceller)
+	report, err := service.Run(context.Background(), now)
+	if err != nil {
+		t.Fatalf("timeout trade run returned error: %v", err)
+	}
+	if report.Scanned != 1 || report.Cancelled != 1 || canceller.calls != 1 || repo.markCancelledCalls != 0 {
+		t.Fatalf("trade was not cancelled as one aggregate: report=%+v canceller=%+v repo=%+v", report, canceller, repo)
 	}
 }
 

@@ -47,6 +47,7 @@ func (h *MerchantOrderHandler) List(c *gin.Context) {
 		Page:     page,
 		PageSize: pageSize,
 		Status:   status,
+		Keyword:  c.Query("keyword"),
 	})
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
@@ -72,6 +73,8 @@ func (h *MerchantOrderHandler) Detail(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	middleware.SetAuditLogField(c, "order_id", result.ID)
+	middleware.SetAuditLogField(c, "order_no", result.OrderNo)
 	response.Success(c, result)
 }
 
@@ -97,5 +100,7 @@ func (h *MerchantOrderHandler) Ship(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	middleware.SetAuditLogField(c, "order_id", result.ID)
+	middleware.SetAuditLogField(c, "order_no", result.OrderNo)
 	response.Success(c, result)
 }
